@@ -73,3 +73,54 @@ func (f *FFmpeg) ExtractAudio(path string, opts AudioExtractOptions, output stri
 	_, err := f.run(f.ffmpegBin(), args)
 	return err
 }
+
+// ExtractFrames 导出 [start,end) 时间段内的帧序列图片。
+// pattern 为输出文件名模板（如 out/frame_%04d.jpg，格式由扩展名决定）。
+// stepPerSec 为采样频率：>0 时每秒取 stepPerSec 帧（如 1 = 每秒 1 张），
+// <=0 时导出该时间段内的每一帧（原帧率全量）。
+// 返回实际写出的图片数量。
+func (f *FFmpeg) ExtractFrames(input string, start, end, stepPerSec float64, pattern string) (int, error) {
+	if end > 0 && end <= start {
+		return 0, fmt.Errorf("非法时间段 [%.3f, %.3f)", start, end)
+	}
+	if !strings.Contains(pattern, "%") {
+		return 0, fmt.Errorf("输出模板必须包含序号占位符（如 frame_%%04d.jpg）: %s", pattern)
+	}
+
+	args := []string{"-i", input}
+	if start > 0 {
+		// 精确 seek 放 -i 后（帧精确，帧序列场景短片段居多）
+		args = append(args, "-ss", fmt.Sprintf("%.3f", start))
+	}
+	if end > 0 {
+		args = append(args, "-t", fmt.Sprintf("%.3f", end-start))
+	}
+	if stepPerSec > 0 {
+		args = append(args, "-vf", fmt.Sprintf("fps=%.3f", stepPerSec))
+	}
+	// -vsync vfr：按实际帧时间戳写文件，避免重复/丢帧
+	args = append(args, "-vsync", "vfr", "-y", pattern)
+	if _, err := f.run(f.ffmpegBin(), args); err != nil {
+		return 0, err
+	}
+	return countPattern(pattern), nil
+}
+
+// countPattern 统计模板实际落盘的文件数（%04d -> *）。
+func countPattern(pattern string) int {
+	dir := filepath.Dir(pattern)
+	base := filepath.Base(pattern)
+	i := strings.Index(base, "%")
+	prefix, suffix := base[:i], base[i:]
+	for strings.HasPrefix(suffix, "%") {
+		suffix = suffix[strings.IndexAny(suffix, "dix")+1:]
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, prefix+"*"+suffix))
+	n := 0
+	for _, m := range matches {
+		if m != pattern { // 排除模板字符串自身误当文件
+			n++
+		}
+	}
+	return n
+}

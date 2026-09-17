@@ -851,3 +851,41 @@ func TestApplyVideoFilters_None(t *testing.T) {
 	}
 	assertFileExists(t, out)
 }
+
+func TestExtractFrames_AllFrames(t *testing.T) {
+	ff := testFF(t)
+	dir := filepath.Join(outDir(t), "seq_all")
+	os.MkdirAll(dir, 0o755)
+	pattern := filepath.Join(dir, "frame_%04d.jpg")
+	// 2.mp4 30fps，取 [1,2) 全量帧 ≈ 30 张
+	n, err := ff.ExtractFrames(clip(t, "2.mp4"), 1, 2, 0, pattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 27 || n > 33 {
+		t.Fatalf("1s@30fps 应约 30 张，实际 %d", n)
+	}
+	// 抽查首帧存在且非空
+	assertFileExists(t, filepath.Join(dir, "frame_0001.jpg"))
+}
+
+func TestExtractFrames_Sampled(t *testing.T) {
+	ff := testFF(t)
+	dir := filepath.Join(outDir(t), "seq_1fps")
+	os.MkdirAll(dir, 0o755)
+	pattern := filepath.Join(dir, "f_%03d.png")
+	// [0,3) 每秒 1 帧 → 3 张
+	n, err := ff.ExtractFrames(clip(t, "2.mp4"), 0, 3, 1, pattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 3 || n > 4 {
+		t.Fatalf("每秒 1 帧取 3s 应约 3 张，实际 %d", n)
+	}
+	if _, err := ff.ExtractFrames(clip(t, "2.mp4"), 2, 1, 0, pattern); err == nil {
+		t.Fatal("起止倒置应报错")
+	}
+	if _, err := ff.ExtractFrames(clip(t, "2.mp4"), 0, 1, 0, "no_seq.jpg"); err == nil {
+		t.Fatal("缺序号占位应报错")
+	}
+}
