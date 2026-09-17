@@ -889,3 +889,31 @@ func TestExtractFrames_Sampled(t *testing.T) {
 		t.Fatal("缺序号占位应报错")
 	}
 }
+
+func TestWatermarkTile(t *testing.T) {
+	ff := testFF(t)
+	src := filepath.Join(outDir(t), "tile_src.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "2", "-y", src}); err != nil {
+		t.Fatal(err)
+	}
+	wm := filepath.Join(outDir(t), "tile_wm.png")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-f", "lavfi", "-i", "color=red:s=100x50", "-frames:v", "1", "-y", wm}); err != nil {
+		t.Fatal(err)
+	}
+	// AddWatermark 平铺
+	out := filepath.Join(outDir(t), "tile1.mp4")
+	if err := ff.AddWatermark(src, Watermark{Path: wm, Position: PosTile}, 0.5, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+	// 组合链平铺（与淡入淡出叠加）
+	out2 := filepath.Join(outDir(t), "tile2.mp4")
+	err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Watermark: &Watermark{Path: wm, Position: PosTile, Opacity: 0.4},
+		Fade:      &FadeOptions{VideoIn: 0.3, VideoOut: 0.3, AudioIn: 0.3, AudioOut: 0.3},
+	}, out2, EncodeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out2)
+}

@@ -195,3 +195,15 @@ func (f *FFmpeg) ToHLS(input string, segSeconds int, output string) error {
 	_, err := f.run(f.ffmpegBin(), args)
 	return err
 }
+
+// tiledWatermarkChain 生成平铺水印的滤镜段：把水印缩到主画面约 1/4 宽，
+// 4×3 平铺成一张大图后整体居中叠加（W/H 为主画面尺寸表达式）。
+// opacity 0~1 时先调透明度。
+func tiledWatermarkChain(baseLabel string, opacity float64) string {
+	alpha := ""
+	if opacity > 0 && opacity < 1 {
+		alpha = fmt.Sprintf("format=rgba,colorchannelmixer=aa=%.2f,", opacity)
+	}
+	// scale=W/4 后 tile 4x3，overlay 居中
+	return fmt.Sprintf("[1:v]%sscale=W/4:-2,tile=4x3[w];[%s][w]overlay=(W-w)/2:(H-h)/2[v]", alpha, baseLabel)
+}

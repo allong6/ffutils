@@ -84,6 +84,7 @@ const (
 	PosTopRight    Position = "topright"
 	PosBottomLeft  Position = "bottomleft"
 	PosBottomRight Position = "bottomright" // 默认
+	PosTile        Position = "tile"        // 平铺：水印缩到约 1/4 宽后 4×3 平铺满画面（防盗用/批量标记）
 )
 
 // ---------------------------------------------------------------------------
