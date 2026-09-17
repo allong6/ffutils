@@ -917,3 +917,19 @@ func TestWatermarkTile(t *testing.T) {
 	}
 	assertFileExists(t, out2)
 }
+
+func TestDetectHardwareEncoders(t *testing.T) {
+	ff := testFF(t)
+	got := ff.DetectHardwareEncoders()
+	// 本机未必有硬件编码器：只断言"探测不报错、返回的都是合法候选"
+	valid := map[string]bool{"h264_nvenc": true, "hevc_nvenc": true, "h264_qsv": true, "h264_amf": true}
+	for _, h := range got {
+		if !valid[string(h.Codec)] {
+			t.Fatalf("返回了未知编码器: %s", h.Codec)
+		}
+		t.Logf("可用硬件编码器: %s (%s)", h.Codec, h.Label)
+	}
+	if len(got) == 0 {
+		t.Log("本机无可用硬件编码器（仅软编码）")
+	}
+}
