@@ -101,3 +101,12 @@ go test ./...                    # 集成测试
   中文注释可能破坏解析（package.ps1 已两次踩坑）。
 - **预设持久化**在 `~/.ffbox/config.json` 的 presets 字段，不另建存储。
 - **硬件编码探测**结果只做 UI 展示缓存（App.hwOnce），不落盘。
+
+## 测试标准流程（详见 gui 分支 docs/TESTING.md）
+
+- 改动验收走 L1→L2 递进：`powershell -File gui\scripts\test-all.ps1` 一键跑
+  L1（base/service/gui Go 测试）+ L2（前端静态检查 frontend-check.mjs）
+  + L3（CLI 冒烟）。发布或大改后再跑 L4（GUI 十一场景，见
+  gui/testbridge/README.md）。
+- 前端改动必须过 L2 四项检查（ID/方法交叉校验历史两次事故来源）。
+- L4 报告与截图固定在 test/output/screenshots/，机器不可判项列 checkbox 交人工。
