@@ -58,6 +58,7 @@ go test ./...                    # 集成测试
 | `base` | ffmpeg 功能基础定义分支：只包含 ffutils 库本身与测试，不引入任何 UI/TUI/交互层代码 |
 | `gui` | GUI 工具分支：基于 ffutils 的桌面应用（FFBox），**开始任何工作前先 `git merge base`** |
 | `ai` | AI 能力分支：基于 gui（FFBox + 一句话处理），开工前先 `git merge gui`；只写 AI 编排层（提示词/计划/校验），ffmpeg 能力缺口回 base 补 |
+| `license` | 激活分支：基于 gui（激活门 + license-server 平台），开工前先 `git merge gui`；GUI 只内嵌公钥验签（私钥绝不进 GUI），平台代码在 license-server/ 独立模块可整体迁移 |
 
 ### 提交流向与基准
 
