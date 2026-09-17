@@ -21,7 +21,6 @@ func (f *FFmpeg) ExtractFrame(path string, at float64, output string) error {
 }
 
 // ExtractCover 抽取适合做封面的帧：时长超过 1s 取第 1 秒处，否则取首帧。
-// 保留旧版 ExtractCoverImage 的策略。
 func (f *FFmpeg) ExtractCover(path, output string) error {
 	info, err := f.Probe(path)
 	if err != nil {

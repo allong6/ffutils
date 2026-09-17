@@ -7,7 +7,7 @@ test/*.mp4
 test/*.mp3
 test/*.m3u8/
 
-# 旧实现参考
+# 本地参考文件
 legacy_ffmpeg.go.txt
 
 # Go

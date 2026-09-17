@@ -1,17 +1,15 @@
 # ffutils
 
-通用 ffmpeg/ffprobe Go 工具包。由旧版 `legacy_ffmpeg.go.txt` 重构而来。
+通用 ffmpeg/ffprobe Go 工具包，无任何外部依赖。
 
 ## 设计要点
 
-- **入口结构体 `FFmpeg`** 承载工具路径、工作目录、超时，不再每个函数重复传 path。
-- **一次探测拿全部信息**：`Probe()` 返回容器时长、视频流、音频流（替代旧的
-  GetAVDuration / GetVADuration / HasAudio / GetVideoInfo 四个函数，且用 JSON 输出解析，不再脆弱地切 csv）。
-- **参数结构体化**：平行数组（xfades/duration/offset、audioList/volumeList/...）全部改为 `[]Transition`、`[]MixTrack`。
+- **入口结构体 `FFmpeg`** 承载工具路径、工作目录、超时，命令统一执行、错误统一包装。
+- **一次探测拿全部信息**：`Probe()` 一次调用返回容器时长、视频流、音频流，只起一个 ffprobe 进程（JSON 输出解析）。
+- **参数结构体化**：转场用 `[]Transition`，混音轨用 `[]MixTrack`，不使用平行数组。
 - **编码参数 Options 化**：`EncodeOptions` 零值即合理默认（libx264/ultrafast/yuv420p/aac 44100），`ExtraArgs` 兜底。
 - **时间统一为 float64 秒**。
-- **错误统一**：所有命令 `CombinedOutput`，失败时带命令输出尾部，不再有静默失败的 `cmd.Run()`。
-- 无任何外部依赖；旧的 `Transitions`（本身有 bug）已并入 `XfadeConcat`。
+- **错误统一**：所有命令 `CombinedOutput`，失败时带命令输出尾部。
 
 ## 用法
 

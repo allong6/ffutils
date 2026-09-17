@@ -51,8 +51,7 @@ type probeStream struct {
 }
 
 // Probe 探测媒体文件信息。一次调用同时返回容器时长、视频流、音频流信息，
-// 避免旧版 GetAVDuration/GetVADuration/HasAudio/GetVideoInfo 各起一个进程。
-// 用 -of json 输出解析（结构稳定），而不是旧版脆弱的 csv 切分。
+// 只起一个 ffprobe 进程。用 -of json 输出解析（结构稳定）。
 // 注意：只取第一路视频/音频流；流级 duration 缺失（部分 mkv/webm）时回退容器时长。
 func (f *FFmpeg) Probe(path string) (*ProbeResult, error) {
 	out, err := f.run(f.ffprobeBin(), []string{

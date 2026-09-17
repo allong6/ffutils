@@ -32,7 +32,6 @@ type XfadeOptions struct {
 
 // XfadeConcat 将多个视频带转场地拼接为一个视频，同时把各片段的音频
 // 按视频轨对齐后拼接（视频与音频时长不一致时自动补静音）。
-// 这是旧版 VideoXfade 与 Transitions 的合并实现。
 func (f *FFmpeg) XfadeConcat(opts XfadeOptions, output string, enc EncodeOptions) error {
 	n := len(opts.Clips)
 	if n < 2 {
