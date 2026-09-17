@@ -43,6 +43,10 @@ type TranscodeOptions struct {
 
 	// ExtraArgs 逃生舱：追加任意 ffmpeg 参数（输出文件之前）
 	ExtraArgs []string
+
+	// OnProgress 进度回调（可选）。设置后转码过程会以约 1 次/秒的频率
+	// 回调进度（含百分比），GUI/CLI 可用于渲染进度条。回调返回错误会取消转码。
+	OnProgress ProgressFunc
 }
 
 // defaultCodecFor 根据输出扩展名推断默认编码器。
@@ -145,10 +149,23 @@ func (o TranscodeOptions) transcodeArgs(input, output string) []string {
 
 // Transcode 转码/转格式：支持换编码器、改分辨率、改帧率、裁剪时间范围、
 // 换封装格式（由输出扩展名决定）等。最通用的单个输入 -> 单个输出方法。
+// 设置 opts.OnProgress 可获取转码进度。
 func (f *FFmpeg) Transcode(input string, opts TranscodeOptions, output string) error {
 	args := opts.transcodeArgs(input, output)
 	args = append(args, output)
-	_, err := f.run(f.ffmpegBin(), args)
+	if opts.OnProgress == nil {
+		_, err := f.run(f.ffmpegBin(), args)
+		return err
+	}
+	// 进度百分比需要总时长（裁剪时用裁剪后的时长）
+	total := 0.0
+	if info, err := f.Probe(input); err == nil {
+		total = info.Duration - opts.TrimStart
+		if opts.TrimEnd > opts.TrimStart {
+			total = opts.TrimEnd - opts.TrimStart
+		}
+	}
+	_, err := f.runProgress(args, total, opts.OnProgress)
 	return err
 }
 

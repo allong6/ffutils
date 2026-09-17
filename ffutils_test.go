@@ -504,3 +504,163 @@ func TestToGIF(t *testing.T) {
 		t.Fatalf("宽度应为 320，实际 %d", info.Video.Width)
 	}
 }
+
+// ---------- 第三批：画面操作 / 字幕 / 淡入淡出 / 倒放 / 音量 / HLS / 进度 ----------
+
+// shortClip 生成一个 3s 的小片段供画面类测试快速使用。
+func shortClip(t *testing.T, ff *FFmpeg) string {
+	t.Helper()
+	out := filepath.Join(outDir(t), "src3s.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "3", "-y", out}); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestCrop(t *testing.T) {
+	ff := testFF(t)
+	src := shortClip(t, ff)
+	out := filepath.Join(outDir(t), "crop.mp4")
+	if err := ff.Crop(src, 100, 50, 640, 360, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 640 || info.Video.Height != 360 {
+		t.Fatalf("裁剪后应为 640x360，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+}
+
+func TestRotate(t *testing.T) {
+	ff := testFF(t)
+	src := shortClip(t, ff)
+	out := filepath.Join(outDir(t), "rot.mp4")
+	if err := ff.Rotate(src, Rot90CW, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 1280x720 旋转 90° 后应变为 720x1280
+	if info.Video.Width != 720 || info.Video.Height != 1280 {
+		t.Fatalf("旋转后应为 720x1280，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+	if err := ff.Rotate(src, "bad", filepath.Join(outDir(t), "x.mp4"), EncodeOptions{}); err == nil {
+		t.Fatal("未知旋转类型应报错")
+	}
+}
+
+func TestAddWatermark(t *testing.T) {
+	ff := testFF(t)
+	src := shortClip(t, ff)
+	wm := filepath.Join(outDir(t), "wm.png")
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-f", "lavfi", "-i", "color=red:s=120x60", "-frames:v", "1", "-y", wm,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(outDir(t), "watermarked.mp4")
+	if err := ff.AddWatermark(src, Watermark{Path: wm, Position: PosTopRight, Margin: 20}, 0.5, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+}
+
+func TestBurnSubtitle(t *testing.T) {
+	ff := testFF(t)
+	src := shortClip(t, ff)
+	srt := filepath.Join(outDir(t), "sub.srt")
+	if err := os.WriteFile(srt, []byte("1\n00:00:00,000 --> 00:00:02,500\n测试字幕 hello\n\n2\n00:00:02,500 --> 00:00:03,000\n第二行\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(outDir(t), "subbed.mp4")
+	if err := ff.BurnSubtitle(src, srt, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+}
+
+func TestFadeAV(t *testing.T) {
+	ff := testFF(t)
+	src := shortClip(t, ff)
+	out := filepath.Join(outDir(t), "faded.mp4")
+	if err := ff.FadeAV(src, FadeOptions{VideoIn: 0.5, VideoOut: 0.5, AudioIn: 0.5, AudioOut: 0.5}, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+	if err := ff.FadeAV(src, FadeOptions{}, filepath.Join(outDir(t), "x.mp4"), EncodeOptions{}); err == nil {
+		t.Fatal("空淡入淡出参数应报错")
+	}
+}
+
+func TestReverse(t *testing.T) {
+	ff := testFF(t)
+	src := shortClip(t, ff)
+	out := filepath.Join(outDir(t), "reversed.mp4")
+	if err := ff.Reverse(src, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertDuration(t, ff, out, 3.0, 0.3)
+}
+
+func TestSetVolume(t *testing.T) {
+	ff := testFF(t)
+	src := shortClip(t, ff)
+	out := filepath.Join(outDir(t), "vol.mp4")
+	if err := ff.SetVolume(src, 0.5, out); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+}
+
+func TestHLS_RoundTrip(t *testing.T) {
+	ff := testFF(t)
+	src := shortClip(t, ff)
+
+	// 切 HLS
+	index := filepath.Join(outDir(t), "hls", "index.m3u8")
+	if err := os.MkdirAll(filepath.Dir(index), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ff.ToHLS(src, 1, index); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, index)
+
+	// 本地 m3u8 合成回单文件：分片与索引同目录，用 Dir 定位
+	out := filepath.Join(outDir(t), "from_hls.mp4")
+	f2 := *ff
+	f2.Dir = filepath.Dir(index)
+	if err := f2.FromHLS("index.m3u8", out); err != nil {
+		t.Fatal(err)
+	}
+	assertDuration(t, ff, out, 3.0, 0.3)
+}
+
+func TestTranscodeProgress(t *testing.T) {
+	ff := testFF(t)
+	var got Progress
+	var calls int
+	out := filepath.Join(outDir(t), "prog.mp4")
+	err := ff.Transcode(clip(t, "2.mp4"), TranscodeOptions{
+		TrimEnd: 2,
+		OnProgress: func(p Progress) error {
+			calls++
+			got = p
+			return nil
+		},
+	}, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls == 0 {
+		t.Fatal("进度回调未被调用")
+	}
+	if got.Percent < 95 || got.Percent > 100 {
+		t.Fatalf("最终进度应接近 100%%，实际 %.1f%%（共 %d 次回调）", got.Percent, calls)
+	}
+	t.Logf("进度回调 %d 次，最终 %.1f%%, speed=%.2fx", calls, got.Percent, got.Speed)
+}
