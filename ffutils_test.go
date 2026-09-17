@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -763,4 +764,17 @@ func TestPictureInPicture(t *testing.T) {
 	if info.Video.Width != 1280 {
 		t.Fatalf("画中画输出宽度应保持 1280，实际 %d", info.Video.Width)
 	}
+}
+
+func TestTranscodeCommand(t *testing.T) {
+	ff := testFF(t)
+	cmd := ff.TranscodeCommand("in.mp4", TranscodeOptions{Width: 640, CRF: 23, TrimStart: 10, TrimEnd: 20}, "out.mp4")
+	// 不执行进程，仅校验参数串关键片段
+	for _, want := range []string{"-ss", "10.000", "-i", "in.mp4", "-t", "10.000",
+		"scale=640:-2", "-c:v", "libx264", "-crf", "23", "-y", "out.mp4"} {
+		if !strings.Contains(cmd, want) {
+			t.Fatalf("命令预览缺少 %q:\n%s", want, cmd)
+		}
+	}
+	t.Logf("preview: %s", cmd)
 }

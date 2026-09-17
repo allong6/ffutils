@@ -272,3 +272,12 @@ func orDefaultInt(v, def int) int {
 	}
 	return v
 }
+
+// TranscodeCommand 返回 Transcode 将执行的完整 ffmpeg 参数串（不含可执行
+// 文件路径本身），供 GUI 做"命令预览"。注意：实际执行时若设置了
+// OnProgress，还会附加 -nostats -progress pipe:1，预览串中不含这两项。
+func (f *FFmpeg) TranscodeCommand(input string, opts TranscodeOptions, output string) string {
+	args := opts.transcodeArgs(input, output)
+	args = append(args, output)
+	return strings.Join(args, " ")
+}
