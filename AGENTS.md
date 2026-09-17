@@ -58,8 +58,23 @@ go test ./...                    # 集成测试
 | `base` | ffmpeg 功能基础定义分支：只包含 ffutils 库本身与测试，不引入任何 UI/TUI/交互层代码 |
 | `gui` | GUI 工具分支：基于 ffutils 的桌面应用（FFBox），**开始任何工作前先 `git merge base`** |
 
-- 库的新功能、bug 修复、测试都提交到 `base`；下游分支只允许 merge base，
-  不允许直接向 base 提交界面代码，也不允许在 gui 分支直接修改库代码。
+### 提交流向与基准
+
+```
+        （功能/修复直接提交）                （发布：merge/fast-forward）
+  开发 ──────────────▶ base ──────────────▶ master
+                        │
+                        │ merge（每次开工前同步）
+                        ▼
+                        gui ──界面代码直接提交──▶ gui
+```
+
+- **base 是唯一上游基准**：master 与 gui 的内容都源于 base，方向永远是
+  base → 下游；**严禁反向**（gui/master 向 base 提交或 merge）。
+- 直接提交只发生在两处：库代码提交到 base，界面代码提交到 gui；
+  master 不承载直接开发，只作为发布基线跟随 base。
+- 库的新功能、bug 修复、测试都提交到 `base`；不允许直接向 base 提交
+  界面代码，也不允许在 gui 分支直接修改库代码。
 - gui 发现库缺陷或需要新能力：切回 base 修改并测试，再 merge 回来。
 
 ## 分支红线（历史事故教训，必须遵守）
