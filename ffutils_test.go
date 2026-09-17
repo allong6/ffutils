@@ -933,3 +933,30 @@ func TestDetectHardwareEncoders(t *testing.T) {
 		t.Log("本机无可用硬件编码器（仅软编码）")
 	}
 }
+
+func TestXfadeConcatMixedAudio(t *testing.T) {
+	// 有音轨 + 无音轨混合拼接（GUI 真实场景发现的回归）：
+	// 去音片段参与拼接必须补静音轨而不是失败
+	ff := testFF(t)
+	mute := filepath.Join(outDir(t), "mixmute.mp4")
+	if err := ff.Mute(clip(t, "2.mp4"), mute); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(outDir(t), "mix_concat.mp4")
+	err := ff.XfadeConcat(XfadeOptions{
+		Clips:       []string{clip(t, "2.mp4"), mute},
+		Transitions: []Transition{{Type: Fade, Duration: 0.5}},
+	}, out, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("混合音轨拼接应成功: %v", err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasAudio {
+		t.Fatal("补静音后成片应有音轨")
+	}
+	// 10.37 + 10.37 - 0.5 ≈ 20.24
+	assertDuration(t, ff, out, 20.24, 0.3)
+}

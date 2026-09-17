@@ -80,6 +80,7 @@ func (f *FFmpeg) XfadeConcat(opts XfadeOptions, output string, enc EncodeOptions
 	var inputArgs []string
 	var videoChain, audioChain strings.Builder
 	var audioInputs []string // 参与最终音频 concat 的 label，按顺序
+	silentPads := 0          // 无音轨输入补的 anullsrc 输入数
 
 	// label 命名空间：c%d 归一化后的片段视频轨，x%d 转场/拼接的累计结果，
 	// 两套命名避免 ffmpeg 滤镜图中 label 复用冲突
@@ -114,7 +115,15 @@ func (f *FFmpeg) XfadeConcat(opts XfadeOptions, output string, enc EncodeOptions
 		if !isLast && trans.Type != "" && trans.Duration > 0 {
 			audioTarget -= trans.Duration
 		}
-		if pad := audioTarget - audioDur; pad > 0 {
+		if !info.HasAudio {
+			// 无音轨输入：补一条同时长的静音轨，保证音频 concat 链完整
+			// （混合"有音/无音"拼接的常见场景，如去音片段参与拼接）
+			silentIdx := n + silentPads
+			inputArgs = append(inputArgs, "-f", "lavfi", "-i",
+				fmt.Sprintf("anullsrc=r=44100:cl=stereo:d=%.3f", audioTarget))
+			silentPads++
+			audioInputs = append(audioInputs, fmt.Sprintf("[%d:a]", silentIdx))
+		} else if pad := audioTarget - audioDur; pad > 0 {
 			// 音频比视频轨短：裁到原时长后补静音
 			audioChain.WriteString(fmt.Sprintf("[%d:a]atrim=0:%.3f[a%d];", i, audioDur, i))
 			audioInputs = append(audioInputs, fmt.Sprintf("[a%d]", i))
