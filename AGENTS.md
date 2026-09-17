@@ -92,3 +92,12 @@ go test ./...                    # 集成测试
    - `AGENTS.md`：以 base 版本为准（统一内容，见 Git 约定）；
    - `.gitignore`：保留 gui 分支的 `gui/build/`、`gui/frontend/wailsjs/` 条目，
      **不采纳** base 的 `gui/` 整目录规则（那会忽略 gui 分支自己的源码）。
+
+## gui 分支补充约束（M4 起）
+
+- **CLI 子命令**（gui/cli.go）改动后必须跑 `cd gui && go test -run TestCLI ./`；
+  参数解析用自研 parseCLI（参数位置任意），不要引入 Go flag 包（首个位置参数后停止解析）。
+- **PowerShell 脚本必须 ASCII-only**：PS 5.1 对无 BOM 的 UTF-8 按 ANSI 误读，
+  中文注释可能破坏解析（package.ps1 已两次踩坑）。
+- **预设持久化**在 `~/.ffbox/config.json` 的 presets 字段，不另建存储。
+- **硬件编码探测**结果只做 UI 展示缓存（App.hwOnce），不落盘。
