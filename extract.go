@@ -33,20 +33,11 @@ func (f *FFmpeg) ExtractCover(path, output string) error {
 	return f.ExtractFrame(path, at, output)
 }
 
-// AudioFormat 音频抽取的目标格式。
-type AudioFormat string
-
-const (
-	FormatMP3 AudioFormat = "libmp3lame"
-	FormatAAC AudioFormat = "aac"
-	FormatWAV AudioFormat = "pcm_s16le"
-)
-
 // AudioExtractOptions 音频抽取参数，零值使用默认。
 type AudioExtractOptions struct {
-	// Codec 音频编码器，默认按输出扩展名推断（mp3->libmp3lame, m4a/aac->aac, wav->pcm_s16le），
-	// 也可直接用 FormatMP3 等常量指定
-	Codec AudioFormat
+	// Codec 音频编码器，见 AudioCodec 常量组（AudioMP3/AudioAAC/AudioPCM 等），
+	// 默认按输出扩展名推断（mp3->AudioMP3, m4a/aac->AudioAAC, wav->AudioPCM）
+	Codec AudioCodec
 	// Bitrate 音频码率如 "192k"，空则用编码器默认
 	Bitrate string
 	// SampleRate 采样率，<=0 不指定
@@ -59,13 +50,13 @@ func (o AudioExtractOptions) codecFor(output string) string {
 	}
 	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(output), ".")) {
 	case "mp3":
-		return string(FormatMP3)
+		return string(AudioMP3)
 	case "m4a", "aac":
-		return string(FormatAAC)
+		return string(AudioAAC)
 	case "wav":
-		return string(FormatWAV)
+		return string(AudioPCM)
 	default:
-		return string(FormatMP3)
+		return string(AudioMP3)
 	}
 }
 

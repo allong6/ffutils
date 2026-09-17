@@ -7,15 +7,17 @@ import (
 
 // EncodeOptions 描述输出编码参数，零值字段使用默认值。
 type EncodeOptions struct {
-	// VideoCodec 视频编码器，默认 libx264；设为 "copy" 表示流式拷贝不重编码
-	VideoCodec string
-	// Preset 编码速度预设，默认 ultrafast
-	Preset string
+	// VideoCodec 视频编码器，见 VideoCodec 常量组；默认 VideoH264，
+	// 设为 VideoCopy 表示流式拷贝不重编码
+	VideoCodec VideoCodec
+	// Preset 编码速度预设，见 Preset 常量组；默认 PresetUltrafast
+	Preset Preset
 	// PixFmt 像素格式，默认 yuv420p
 	PixFmt string
-	// AudioCodec 音频编码器，默认 aac；设为 "copy" 表示不重编码
-	AudioCodec string
-	// AudioRate 音频采样率，默认 44100；<=0 时输出 aformat 转换
+	// AudioCodec 音频编码器，见 AudioCodec 常量组；默认 AudioAAC，
+	// 设为 AudioCopy 表示不重编码
+	AudioCodec AudioCodec
+	// AudioRate 音频采样率，默认 44100
 	AudioRate int
 	// CRF 恒定质量，0 表示不指定
 	CRF int
@@ -23,10 +25,15 @@ type EncodeOptions struct {
 	ExtraArgs []string
 }
 
-func (o EncodeOptions) videoCodec() string  { return orDefault(o.VideoCodec, "libx264") }
-func (o EncodeOptions) preset() string      { return orDefault(o.Preset, "ultrafast") }
-func (o EncodeOptions) pixFmt() string      { return orDefault(o.PixFmt, "yuv420p") }
-func (o EncodeOptions) audioRate() int      { if o.AudioRate > 0 { return o.AudioRate }; return 44100 }
+func (o EncodeOptions) videoCodec() VideoCodec { return VideoCodec(orDefault(string(o.VideoCodec), string(VideoH264))) }
+func (o EncodeOptions) preset() Preset         { return Preset(orDefault(string(o.Preset), string(PresetUltrafast))) }
+func (o EncodeOptions) pixFmt() string         { return orDefault(o.PixFmt, "yuv420p") }
+func (o EncodeOptions) audioRate() int {
+	if o.AudioRate > 0 {
+		return o.AudioRate
+	}
+	return 44100
+}
 func orDefault(v, def string) string {
 	if strings.TrimSpace(v) == "" {
 		return def
@@ -35,26 +42,24 @@ func orDefault(v, def string) string {
 }
 
 // outputArgs 生成通用的输出参数段（编码 + 覆盖）。
-// needVideoAudioFilter 表示是否需要在 filter 中完成 aformat（amix 等场景），
-// false 时由这里追加 -ar 参数。
 func (o EncodeOptions) outputArgs() []string {
 	args := make([]string, 0, 16)
-	if o.VideoCodec == "copy" {
+	if o.VideoCodec == VideoCopy {
 		args = append(args, "-c:v", "copy")
 	} else {
-		args = append(args, "-c:v", o.videoCodec())
-		if o.videoCodec() == "libx264" {
-			args = append(args, "-preset", o.preset())
+		args = append(args, "-c:v", string(o.videoCodec()))
+		if o.videoCodec() == VideoH264 {
+			args = append(args, "-preset", string(o.preset()))
 			if o.CRF > 0 {
 				args = append(args, "-crf", strconv.Itoa(o.CRF))
 			}
 		}
 		args = append(args, "-pix_fmt", o.pixFmt())
 	}
-	if o.AudioCodec == "copy" {
+	if o.AudioCodec == AudioCopy {
 		args = append(args, "-c:a", "copy")
 	} else {
-		args = append(args, "-c:a", orDefault(o.AudioCodec, "aac"), "-ar", strconv.Itoa(o.audioRate()))
+		args = append(args, "-c:a", orDefault(string(o.AudioCodec), string(AudioAAC)), "-ar", strconv.Itoa(o.audioRate()))
 	}
 	args = append(args, o.ExtraArgs...)
 	args = append(args, "-y")

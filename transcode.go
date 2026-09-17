@@ -22,18 +22,20 @@ type TranscodeOptions struct {
 	// Fps 目标帧率，<=0 保持原始
 	Fps float64
 
-	// VideoCodec 视频编码器，空则按输出扩展名推断（mp4/mkv->libx264, webm->libvpx-vp9），
-	// "copy" 表示视频流不重编码
-	VideoCodec string
+	// VideoCodec 视频编码器，见 VideoCodec 常量组；空则按输出扩展名推断
+	// （mp4/mkv->libx264, webm->libvpx-vp9），VideoCopy 表示视频流不重编码
+	VideoCodec VideoCodec
 	// VideoBitrate 目标视频码率（如 "2M"），与 CRF 二选一，同时设置时优先 CRF
 	VideoBitrate string
 	// CRF 恒定质量（x264/x265 建议 18~28，越小质量越高），0 表示不启用
 	CRF int
-	// Preset 编码速度预设，默认 medium（转码默认比剪辑类更注重画质）
-	Preset string
+	// Preset 编码速度预设，见 Preset 常量组；默认 PresetMedium
+	// （转码默认比剪辑类更注重画质）
+	Preset Preset
 
-	// AudioCodec 音频编码器，空则默认 aac（webm 为 libopus），"copy" 不重编码
-	AudioCodec string
+	// AudioCodec 音频编码器，见 AudioCodec 常量组；空则默认 aac（webm 为
+	// libopus），AudioCopy 表示不重编码
+	AudioCodec AudioCodec
 	// AudioBitrate 目标音频码率（如 "128k"）
 	AudioBitrate string
 	// Mute 去掉音轨
@@ -64,7 +66,7 @@ func defaultCodecFor(output string) (video, audio string) {
 // transcodeArgs 依据 opts 构建完整的转码参数（不含 -y 与输出路径）。
 // scale 表达式：只指定一边时另一边按宽高比自适应（-2 表示自动计算并保证偶数）。
 func (o TranscodeOptions) transcodeArgs(input, output string) []string {
-	vcodec, acodec := o.VideoCodec, o.AudioCodec
+	vcodec, acodec := string(o.VideoCodec), string(o.AudioCodec)
 	if vcodec == "" || acodec == "" {
 		dv, da := defaultCodecFor(output)
 		if vcodec == "" {
@@ -110,7 +112,7 @@ func (o TranscodeOptions) transcodeArgs(input, output string) []string {
 	} else {
 		args = append(args, "-c:v", vcodec)
 		if vcodec == "libx264" || vcodec == "libx265" {
-			args = append(args, "-preset", orDefault(o.Preset, "medium"))
+			args = append(args, "-preset", orDefault(string(o.Preset), string(PresetMedium)))
 			if o.CRF > 0 {
 				args = append(args, "-crf", itoa(o.CRF))
 			} else if o.VideoBitrate != "" {
@@ -191,7 +193,7 @@ func (f *FFmpeg) ReplaceAudio(video, audio string, loopAudio bool, output string
 	args = append(args, "-filter_complex", filter,
 		"-map", "0:v", "-map", "[a]", "-shortest")
 	// 视频流拷贝，音频用 EncodeOptions 的音频参数
-	args = append(args, "-c:v", "copy", "-c:a", orDefault(enc.AudioCodec, "aac"),
+	args = append(args, "-c:v", "copy", "-c:a", orDefault(string(enc.AudioCodec), string(AudioAAC)),
 		"-ar", itoa(enc.audioRate()), "-y", output)
 	_, err := f.run(f.ffmpegBin(), args)
 	return err

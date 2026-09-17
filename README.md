@@ -103,3 +103,18 @@ _ = ff.ToGIF("in.mp4", 1, 3, 320, 10, "clip.gif")
 SpriteResult 等）带 json tag、可直接序列化展示。做 TUI 时建议在本仓库新增独立的
 `tui/` 模块引用 ffutils，TUI 层只负责交互与渲染，不混入命令构建逻辑；
 FFmpeg 结构体的字段（路径/超时）也可作为 TUI 的设置项直接暴露。
+
+## 枚举参数
+
+所有枚举型字符串参数都定义为类型化常量（enums.go），零值（""）表示按上下文取默认：
+
+| 类型 | 字段 | 常量示例 |
+|---|---|---|
+| `TransitionType` | `Transition.Type` | `Fade` `FadeBlack` `SlideLeft` `CircleCrop` `WipeUp` `Pixelize` 等 30+ 种 |
+| `Position` | `Watermark.Position` | `PosTopLeft` `PosTopRight` `PosBottomLeft` `PosBottomRight` |
+| `VideoCodec` | `EncodeOptions.VideoCodec` / `TranscodeOptions.VideoCodec` | `VideoH264` `VideoH265` `VideoVP9` `VideoCopy` 及 NVENC/QSV/AMF 硬件编码 |
+| `AudioCodec` | `EncodeOptions.AudioCodec` / `TranscodeOptions.AudioCodec` / `AudioExtractOptions.Codec` | `AudioAAC` `AudioMP3` `AudioOpus` `AudioFLAC` `AudioPCM` `AudioCopy` |
+| `Preset` | `EncodeOptions.Preset` / `TranscodeOptions.Preset` | `PresetUltrafast` ~ `PresetVeryslow` 九档 |
+
+常量未覆盖的 ffmpeg 取值仍可直接用字符串字面量赋值（类型均为 string 底层），
+错误拼写会在运行时由 ffmpeg 报错反馈。

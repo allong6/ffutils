@@ -11,8 +11,8 @@ import (
 type Watermark struct {
 	// Path 水印图片路径（png 带透明通道最佳）
 	Path string
-	// Position 预设位置：topleft / topright / bottomleft / bottomright（默认）
-	Position string
+	// Position 预设位置，见 Position 常量组（PosTopLeft 等），默认右下角
+	Position Position
 	// Margin 距边缘像素，默认 10
 	Margin int
 }
@@ -24,14 +24,14 @@ func (w Watermark) overlayExpr() string {
 		m = 10
 	}
 	var pos string
-	switch strings.ToLower(w.Position) {
-	case "topleft":
+	switch Position(strings.ToLower(string(w.Position))) {
+	case PosTopLeft:
 		pos = fmt.Sprintf("%d:%d", m, m)
-	case "topright":
+	case PosTopRight:
 		pos = fmt.Sprintf("W-w-%d:%d", m, m)
-	case "bottomleft":
+	case PosBottomLeft:
 		pos = fmt.Sprintf("%d:H-h-%d", m, m)
-	default: // bottomright
+	default: // PosBottomRight
 		pos = fmt.Sprintf("W-w-%d:H-h-%d", m, m)
 	}
 	return pos

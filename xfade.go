@@ -7,9 +7,9 @@ import (
 
 // Transition 描述两个相邻片段之间的转场。
 type Transition struct {
-	// Type xfade 转场类型，如 "fade"、"slideleft"、"circleopen" 等；
+	// Type xfade 转场类型，见 TransitionType 常量组（Fade/SlideLeft/CircleOpen 等）；
 	// 留空（零值）表示该处不做转场，直接硬切拼接。
-	Type string
+	Type TransitionType
 	// Duration 转场时长（秒），无转场时忽略
 	Duration float64
 }
