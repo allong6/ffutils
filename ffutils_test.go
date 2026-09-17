@@ -1,0 +1,506 @@
+package ffutils
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+	"time"
+)
+
+// 测试资源位置：bin/ 下放 ffmpeg.exe、ffprobe.exe，test/ 下放测试素材。
+// 产物输出到 test/output/<用例名>/，其中部分需人工查看，见 test/output/REVIEW.md。
+
+var (
+	binDir  = findDir("bin")
+	testDir = findDir("test")
+	outRoot = filepath.Join(testDir, "output")
+)
+
+// findDir 从当前包目录向上查找子目录（兼容 go test 的工作目录）。
+func findDir(name string) string {
+	_, file, _, _ := runtime.Caller(0)
+	dir := filepath.Dir(file)
+	for i := 0; i < 5; i++ {
+		p := filepath.Join(dir, name)
+		if st, err := os.Stat(p); err == nil && st.IsDir() {
+			return p
+		}
+		dir = filepath.Dir(dir)
+	}
+	return name
+}
+
+func testFF(t *testing.T) *FFmpeg {
+	t.Helper()
+	if _, err := os.Stat(binDir); err != nil {
+		t.Skipf("未找到 %s，跳过真实命令测试", binDir)
+	}
+	return &FFmpeg{
+		FFmpegPath:  filepath.Join(binDir, exe("ffmpeg")),
+		FFprobePath: filepath.Join(binDir, exe("ffprobe")),
+		Timeout:     10 * time.Minute,
+	}
+}
+
+func exe(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
+}
+
+// outDir 为当前用例创建独立的输出目录。
+func outDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(outRoot, t.Name())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func clip(t *testing.T, name string) string {
+	t.Helper()
+	return filepath.Join(testDir, name)
+}
+
+// assertFileExists 断言文件存在且非空，返回路径。
+func assertFileExists(t *testing.T, path string) string {
+	t.Helper()
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("输出文件不存在 %s: %v", path, err)
+	}
+	if st.Size() == 0 {
+		t.Fatalf("输出文件为空: %s", path)
+	}
+	return path
+}
+
+// assertDuration 断言输出时长与期望值误差在 tolerance 秒内。
+func assertDuration(t *testing.T, ff *FFmpeg, path string, want, tolerance float64) {
+	t.Helper()
+	info, err := ff.Probe(path)
+	if err != nil {
+		t.Fatalf("探测输出失败: %v", err)
+	}
+	d := info.Duration - want
+	if d < -tolerance || d > tolerance {
+		t.Fatalf("输出时长 %.3fs，期望 %.3fs（误差 %.3fs 超过 %.3fs）", info.Duration, want, d, tolerance)
+	}
+	t.Logf("时长校验通过: %.3fs（期望 %.3fs）", info.Duration, want)
+}
+
+// ---------- Probe ----------
+
+func TestProbe(t *testing.T) {
+	ff := testFF(t)
+	info, err := ff.Probe(clip(t, "1.mp4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasVideo || !info.HasAudio {
+		t.Fatalf("1.mp4 应同时含视频和音频流: %+v", info)
+	}
+	if info.Video.Width != 686 || info.Video.Height != 968 {
+		t.Fatalf("分辨率应为 686x968，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+	if info.Video.FrameRate < 50 || info.Video.FrameRate > 80 {
+		t.Fatalf("帧率应在 50~80（avg_frame_rate 约 62.8），实际 %.2f", info.Video.FrameRate)
+	}
+	if info.Duration < 90 || info.Duration > 92 {
+		t.Fatalf("总时长应约 91s，实际 %.2f", info.Duration)
+	}
+	if info.Audio.Duration < 90 || info.Audio.Duration > 91.5 {
+		t.Fatalf("音频时长应约 91s，实际 %.2f", info.Audio.Duration)
+	}
+	t.Logf("probe ok: dur=%.2fs video=%dx%d@%.1f audio=%.2fs",
+		info.Duration, info.Video.Width, info.Video.Height, info.Video.FrameRate, info.Audio.Duration)
+}
+
+func TestProbe_NoAudioStream(t *testing.T) {
+	ff := testFF(t)
+	// 先生成一个无音频的视频，再探测
+	mute := filepath.Join(outDir(t), "mute.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-an", "-t", "1", "-y", mute}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(mute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HasAudio || info.Audio != nil {
+		t.Fatal("去音视频不应探测到音频流")
+	}
+	if !info.HasVideo {
+		t.Fatal("应有视频流")
+	}
+}
+
+// ---------- ExtractFrame / ExtractCover ----------
+
+func TestExtractFrame(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "frame.png")
+	if err := ff.ExtractFrame(clip(t, "1.mp4"), 1.5, out); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+}
+
+func TestExtractFrame_FirstFrame(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "frame0.png")
+	if err := ff.ExtractFrame(clip(t, "1.mp4"), 0, out); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+}
+
+func TestExtractCover(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "cover.jpg")
+	if err := ff.ExtractCover(clip(t, "1.mp4"), out); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+}
+
+// ---------- ExtractAudio ----------
+
+func TestExtractAudio_MP3(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "audio.mp3")
+	if err := ff.ExtractAudio(clip(t, "1.mp4"), AudioExtractOptions{Bitrate: "128k"}, out); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasAudio || info.HasVideo {
+		t.Fatalf("mp3 应只有音频流: %+v", info)
+	}
+}
+
+// ---------- Concat ----------
+
+func TestConcat_Copy(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "concat.mp4")
+	err := ff.Concat([]string{clip(t, "1.mp4"), clip(t, "2.mp4")}, out, EncodeOptions{VideoCodec: "copy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+	// 91.04 + 10.37 ≈ 101.41
+	assertDuration(t, ff, out, 101.41, 0.2)
+}
+
+func TestConcat_NeedTwoFiles(t *testing.T) {
+	ff := testFF(t)
+	err := ff.Concat([]string{clip(t, "1.mp4")}, filepath.Join(outDir(t), "x.mp4"), EncodeOptions{})
+	if err == nil {
+		t.Fatal("单文件拼接应报错")
+	}
+}
+
+// ---------- XfadeConcat ----------
+
+func TestXfadeConcat_FadeAndCut(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "xfade.mp4")
+	err := ff.XfadeConcat(XfadeOptions{
+		Clips: []string{clip(t, "1.mp4"), clip(t, "2.mp4"), clip(t, "3.mp4")},
+		Transitions: []Transition{
+			{Type: "fade", Duration: 0.5},
+			{}, // 第二处硬切
+		},
+	}, out, EncodeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+	// 91.04 + 10.37 + 58.50 - 0.5(转场重叠) ≈ 159.41
+	assertDuration(t, ff, out, 159.41, 0.1)
+
+	// 三段分辨率/编码各不相同，输出应统一为最大宽高（1280x974）
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 1280 || info.Video.Height != 974 {
+		t.Fatalf("输出应归一化到 1280x968，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+}
+
+func TestXfadeConcat_AllFade(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "xfade_all.mp4")
+	err := ff.XfadeConcat(XfadeOptions{
+		Clips: []string{clip(t, "2.mp4"), clip(t, "3.mp4")},
+		Transitions: []Transition{
+			{Type: "slideleft", Duration: 1},
+		},
+	}, out, EncodeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 10.37 + 58.50 - 1 ≈ 67.87
+	assertDuration(t, ff, out, 67.87, 0.1)
+}
+
+func TestXfadeConcat_OnlyClips(t *testing.T) {
+	ff := testFF(t)
+	// 不传 Transitions：全部硬切，等价于带归一化的拼接
+	out := filepath.Join(outDir(t), "hardcut.mp4")
+	err := ff.XfadeConcat(XfadeOptions{Clips: []string{clip(t, "2.mp4"), clip(t, "3.mp4")}}, out, EncodeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDuration(t, ff, out, 68.87, 0.1)
+}
+
+// ---------- MixAudio ----------
+
+func TestMixAudio_MultiTrack(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "mix.mp4")
+	err := ff.MixAudio(clip(t, "1.mp4"), []MixTrack{
+		{Path: clip(t, "泉水.mp3"), Volume: 0.3},
+		{Path: clip(t, "警笛.mp3"), StartAt: 2.0, Volume: 0.5},
+		{Path: clip(t, "锣.mp3"), StartAt: 4.0, Speed: 1.5, TrimIn: 0.5, TrimOut: 3, Volume: 0.6},
+	}, out, EncodeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+	// 输出时长以视频轨为准（91.04s），音频较短应被补静音拉齐
+	assertDuration(t, ff, out, 91.04, 0.2)
+}
+
+func TestMixAudio_NeedTracks(t *testing.T) {
+	ff := testFF(t)
+	err := ff.MixAudio(clip(t, "1.mp4"), nil, filepath.Join(outDir(t), "x.mp4"), EncodeOptions{})
+	if err == nil {
+		t.Fatal("空音轨应报错")
+	}
+}
+
+// ---------- GenerateSpriteSheet ----------
+
+func TestGenerateSpriteSheet(t *testing.T) {
+	ff := testFF(t)
+	res, err := ff.GenerateSpriteSheet(clip(t, "2.mp4"), SpriteOptions{
+		Output:   filepath.Join(outDir(t), "sprite.jpg"),
+		FrameMax: 160,
+		SheetMax: 2048,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, filepath.Join(outDir(t), "sprite.jpg"))
+	if res.FrameWidth <= 0 || res.FrameHeight <= 0 || res.Cols <= 0 || res.Rows <= 0 {
+		t.Fatalf("雪碧图布局非法: %+v", res)
+	}
+	// 2.mp4: 1280x720@30fps, 10.37s。FrameMax=160 -> 缩到 160x90；
+	// SheetMax=2048 -> 12 cols x 22 rows = 264 格，311 帧 / interval
+	if res.FrameWidth != 160 || res.FrameHeight != 90 {
+		t.Fatalf("单帧尺寸应为 160x90，实际 %dx%d", res.FrameWidth, res.FrameHeight)
+	}
+	t.Logf("sprite ok: %dx%d, %d cols x %d rows, %d frames, interval=%d",
+		res.FrameWidth, res.FrameHeight, res.Cols, res.Rows, res.Frames, res.Interval)
+}
+
+// ---------- FrameWriter ----------
+
+func TestFrameWriter(t *testing.T) {
+	ff := testFF(t)
+	// 先抽一帧作为推帧内容和水印图
+	frame := filepath.Join(outDir(t), "src_frame.png")
+	wm := filepath.Join(outDir(t), "watermark.png")
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-i", clip(t, "2.mp4"), "-ss", "1", "-frames:v", "1", "-y", frame,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 生成一张小水印（从同一帧缩放）
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-i", frame, "-vf", "scale=120:-1", "-y", wm,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	frameBytes, err := os.ReadFile(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const fps = 5
+	out := filepath.Join(outDir(t), "stream.mp4")
+	w, err := ff.NewFrameWriter(FrameWriterOptions{
+		Width:     1280,
+		Height:    720,
+		Fps:       fps,
+		Output:    out,
+		Watermark: &Watermark{Path: wm, Position: "bottomright", Margin: 10},
+		Encode:    EncodeOptions{Preset: "medium", CRF: 23},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		if err := w.Write(frameBytes); err != nil {
+			w.Abort()
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// 10 帧 @ 5fps = 2s
+	assertDuration(t, ff, out, 2.0, 0.2)
+}
+
+func TestFrameWriter_InvalidOptions(t *testing.T) {
+	ff := testFF(t)
+	_, err := ff.NewFrameWriter(FrameWriterOptions{Width: 0, Height: 720, Fps: 30, Output: "x.mp4"})
+	if err == nil {
+		t.Fatal("非法参数应报错")
+	}
+}
+
+// ---------- CheckVersion ----------
+
+func TestCheckVersion(t *testing.T) {
+	ff := testFF(t)
+	if err := ff.CheckVersion(ff.ffmpegBin()); err != nil {
+		t.Fatalf("ffmpeg 应可用: %v", err)
+	}
+	if err := ff.CheckVersion(filepath.Join(binDir, "not_exist.exe")); err == nil {
+		t.Fatal("不存在的工具应报错")
+	}
+}
+
+// ---------- Transcode / Remux ----------
+
+func TestTranscode_ResizeAndFps(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "small.mp4")
+	err := ff.Transcode(clip(t, "2.mp4"), TranscodeOptions{
+		Width: 640, Fps: 24, CRF: 28, TrimEnd: 3,
+	}, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 640 {
+		t.Fatalf("宽度应为 640，实际 %d", info.Video.Width)
+	}
+	if info.Video.FrameRate < 23 || info.Video.FrameRate > 25 {
+		t.Fatalf("帧率应为 24，实际 %.1f", info.Video.FrameRate)
+	}
+	if info.Duration > 3.5 {
+		t.Fatalf("裁剪后应不超过 3s，实际 %.2f", info.Duration)
+	}
+}
+
+func TestTranscode_ToWebm(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "out.webm")
+	err := ff.Transcode(clip(t, "2.mp4"), TranscodeOptions{TrimEnd: 2, VideoBitrate: "500k"}, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Codec != "vp9" {
+		t.Fatalf("webm 视频应为 vp9，实际 %s", info.Video.Codec)
+	}
+	assertDuration(t, ff, out, 2.0, 0.3)
+}
+
+func TestRemux(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "remux.mkv")
+	if err := ff.Remux(clip(t, "2.mp4"), out); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+	assertDuration(t, ff, out, 10.37, 0.2)
+}
+
+// ---------- Trim / Mute / ReplaceAudio / Speed ----------
+
+func TestTrim(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "trim.mp4")
+	if err := ff.Trim(clip(t, "3.mp4"), 10, 15.5, out); err != nil {
+		t.Fatal(err)
+	}
+	// 流拷贝按关键帧对齐，起点/终点都可能偏移一个 GOP（本素材约 1s），放宽容差
+	assertDuration(t, ff, out, 5.5, 1.0)
+}
+
+func TestMute(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "mute.mp4")
+	if err := ff.Mute(clip(t, "2.mp4"), out); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HasAudio {
+		t.Fatal("去音后不应有音频流")
+	}
+}
+
+func TestReplaceAudio(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "replaced.mp4")
+	if err := ff.ReplaceAudio(clip(t, "2.mp4"), clip(t, "咳嗽.mp3"), true, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+	assertDuration(t, ff, out, 10.37, 0.3)
+}
+
+func TestSpeed(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "speed2x.mp4")
+	if err := ff.Speed(clip(t, "2.mp4"), 2.0, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// 10.37 / 2 ≈ 5.19
+	assertDuration(t, ff, out, 5.19, 0.2)
+}
+
+// ---------- ToGIF ----------
+
+func TestToGIF(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "clip.gif")
+	if err := ff.ToGIF(clip(t, "2.mp4"), 1, 3, 320, 10, out); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Codec != "gif" {
+		t.Fatalf("应为 gif 编码，实际 %s", info.Video.Codec)
+	}
+	if info.Video.Width != 320 {
+		t.Fatalf("宽度应为 320，实际 %d", info.Video.Width)
+	}
+}

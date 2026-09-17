@@ -1,0 +1,22 @@
+# 测试产物
+test/output/
+
+# 二进制工具与测试素材（体积大，不入库）
+bin/
+test/*.mp4
+test/*.mp3
+test/*.m3u8/
+
+# 旧实现参考
+legacy_ffmpeg.go.txt
+
+# Go
+*.exe
+*.test
+*.out
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
