@@ -20,3 +20,6 @@ legacy_ffmpeg.go.txt
 .vscode/
 .DS_Store
 Thumbs.db
+
+# gui 分支产物（该目录内容在 gui 分支管理）
+gui/
