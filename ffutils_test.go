@@ -664,3 +664,103 @@ func TestTranscodeProgress(t *testing.T) {
 	}
 	t.Logf("进度回调 %d 次，最终 %.1f%%, speed=%.2fx", calls, got.Percent, got.Speed)
 }
+
+// ---------- 第四批：分屏 / 画中画 ----------
+
+func TestComposeGrid_2x1(t *testing.T) {
+	ff := testFF(t)
+	a := filepath.Join(outDir(t), "a3s.mp4")
+	b := filepath.Join(outDir(t), "b2s.mp4")
+	for i, src := range []string{clip(t, "2.mp4"), clip(t, "3.mp4")} {
+		d := []string{a, b}[i]
+		if _, err := ff.run(ff.ffmpegBin(), []string{"-i", src, "-t", []string{"3", "2"}[i], "-y", d}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := filepath.Join(outDir(t), "grid.mp4")
+	if err := ff.ComposeGrid([]string{a, b}, 2, 1, 0, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 格子取最大宽高 1280x974，2 列并排 -> 2560x974；时长以最长的 3s 为准
+	if info.Video.Width != 2560 || info.Video.Height != 974 {
+		t.Fatalf("分屏应为 2560x974，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+	if info.Duration < 2.5 || info.Duration > 3.5 {
+		t.Fatalf("分屏时长应约 3s，实际 %.2f", info.Duration)
+	}
+}
+
+func TestComposeGrid_PadBlack(t *testing.T) {
+	ff := testFF(t)
+	// 2x2 网格只给 3 个输入，右下角应为黑块
+	src := filepath.Join(outDir(t), "s2s.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "2", "-y", src}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(outDir(t), "grid4.mp4")
+	if err := ff.ComposeGrid([]string{src, src, src}, 2, 2, 0, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 2560 || info.Video.Height != 1440 {
+		t.Fatalf("四宫格应为 2560x1440，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+}
+
+func TestSplitScreen(t *testing.T) {
+	ff := testFF(t)
+	a := filepath.Join(outDir(t), "a2s.mp4")
+	b := filepath.Join(outDir(t), "b2s2.mp4")
+	for i, d := range []string{a, b} {
+		if _, err := ff.run(ff.ffmpegBin(), []string{"-i", []string{clip(t, "2.mp4"), clip(t, "3.mp4")}[i], "-t", "2", "-y", d}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := filepath.Join(outDir(t), "vsplit.mp4")
+	if err := ff.SplitScreen(a, b, true, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 1280 || info.Video.Height != 1948 {
+		t.Fatalf("上下分屏应为 1280x1948，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+}
+
+func TestPictureInPicture(t *testing.T) {
+	ff := testFF(t)
+	main := filepath.Join(outDir(t), "main3s.mp4")
+	pip := filepath.Join(outDir(t), "pip1s.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "3", "-y", main}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "3.mp4"), "-t", "1", "-y", pip}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(outDir(t), "pip.mp4")
+	if err := ff.PictureInPicture(main, pip, PiPOptions{
+		Scale:    0.25,
+		Position: PosBottomRight,
+		Opacity:  0.8,
+	}, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// 画面尺寸不变（仍是主画面大小），时长以主画面为准
+	assertDuration(t, ff, out, 3.0, 0.3)
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 1280 {
+		t.Fatalf("画中画输出宽度应保持 1280，实际 %d", info.Video.Width)
+	}
+}
