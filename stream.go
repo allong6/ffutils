@@ -15,6 +15,8 @@ type Watermark struct {
 	Position Position
 	// Margin 距边缘像素，默认 10
 	Margin int
+	// Opacity 不透明度 0~1（0 或 >=1 视为完全不透明）
+	Opacity float64
 }
 
 // overlayExpr 生成 overlay 滤镜参数。

@@ -778,3 +778,76 @@ func TestTranscodeCommand(t *testing.T) {
 	}
 	t.Logf("preview: %s", cmd)
 }
+
+// ---------- ApplyVideoFilters 组合滤镜链 ----------
+
+func TestApplyVideoFilters_Combo(t *testing.T) {
+	ff := testFF(t)
+	src := filepath.Join(outDir(t), "fx_src.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "2", "-y", src}); err != nil {
+		t.Fatal(err)
+	}
+	// 水印图 + 字幕
+	wm := filepath.Join(outDir(t), "fx_wm.png")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-f", "lavfi", "-i", "color=red:s=100x50", "-frames:v", "1", "-y", wm}); err != nil {
+		t.Fatal(err)
+	}
+	srt := filepath.Join(outDir(t), "fx.srt")
+	os.WriteFile(srt, []byte("1\n00:00:00,000 --> 00:00:02,000\n组合滤镜测试\n"), 0o644)
+
+	out := filepath.Join(outDir(t), "fx_combo.mp4")
+	err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Crop:      &CropRect{X: 100, Y: 50, W: 640, H: 360},
+		Watermark: &Watermark{Path: wm, Position: PosTopRight, Opacity: 0.6},
+		Subtitle:  srt,
+		Fade:      &FadeOptions{VideoIn: 0.3, VideoOut: 0.3, AudioIn: 0.3, AudioOut: 0.3},
+	}, out, EncodeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 640 || info.Video.Height != 360 {
+		t.Fatalf("组合裁剪后应 640x360，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+	if !info.HasAudio {
+		t.Fatal("应保留音轨")
+	}
+}
+
+func TestApplyVideoFilters_RotateThenCrop(t *testing.T) {
+	ff := testFF(t)
+	src := filepath.Join(outDir(t), "fx_src2.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "1", "-y", src}); err != nil {
+		t.Fatal(err)
+	}
+	// 先右转 90°（1280x720 -> 720x1280）再裁剪上半 720x640
+	out := filepath.Join(outDir(t), "fx_rotcrop.mp4")
+	err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Rotate: Rot90CW,
+		Crop:   &CropRect{X: 0, Y: 0, W: 720, H: 640},
+	}, out, EncodeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 720 || info.Video.Height != 640 {
+		t.Fatalf("旋转+裁剪应 720x640，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+}
+
+func TestApplyVideoFilters_None(t *testing.T) {
+	ff := testFF(t)
+	// 空链 = 纯重编码，应正常工作
+	out := filepath.Join(outDir(t), "fx_none.mp4")
+	err := ff.ApplyVideoFilters(clip(t, "2.mp4"), VideoFilterChain{}, out, EncodeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+}
