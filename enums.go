@@ -13,15 +13,15 @@ type TransitionType string
 
 // 淡入淡出类
 const (
-	Fade       TransitionType = "fade"       // 交叉淡化（最常用）
-	FadeBlack  TransitionType = "fadeblack"  // 经黑场过渡
-	FadeWhite  TransitionType = "fadewhite"  // 经白场过渡
-	Dissolve   TransitionType = "dissolve"   // 溶解
-	FadeGrays  TransitionType = "fadegrays"  // 灰度溶解
-	HBlur      TransitionType = "hblur"      // 水平模糊过渡
-	Pixelize   TransitionType = "pixelize"   // 像素化过渡
-	Radial     TransitionType = "radial"     // 径向擦除
-	Distance   TransitionType = "distance"   // 距离渐变
+	Fade      TransitionType = "fade"      // 交叉淡化（最常用）
+	FadeBlack TransitionType = "fadeblack" // 经黑场过渡
+	FadeWhite TransitionType = "fadewhite" // 经白场过渡
+	Dissolve  TransitionType = "dissolve"  // 溶解
+	FadeGrays TransitionType = "fadegrays" // 灰度溶解
+	HBlur     TransitionType = "hblur"     // 水平模糊过渡
+	Pixelize  TransitionType = "pixelize"  // 像素化过渡
+	Radial    TransitionType = "radial"    // 径向擦除
+	Distance  TransitionType = "distance"  // 距离渐变
 )
 
 // 擦除（wipe）类
@@ -54,14 +54,14 @@ const (
 
 // 圆形/矩形开合类
 const (
-	CircleCrop TransitionType = "circlecrop" // 圆形收缩/展开
-	CircleOpen TransitionType = "circleopen"
+	CircleCrop  TransitionType = "circlecrop" // 圆形收缩/展开
+	CircleOpen  TransitionType = "circleopen"
 	CircleClose TransitionType = "circleclose"
-	RectCrop   TransitionType = "rectcrop"   // 矩形收缩/展开
-	VertOpen   TransitionType = "vertopen"   // 垂直百叶窗展开
-	VertClose  TransitionType = "vertclose"
-	HorzOpen   TransitionType = "horzopen"   // 水平百叶窗展开
-	HorzClose  TransitionType = "horzclose"
+	RectCrop    TransitionType = "rectcrop" // 矩形收缩/展开
+	VertOpen    TransitionType = "vertopen" // 垂直百叶窗展开
+	VertClose   TransitionType = "vertclose"
+	HorzOpen    TransitionType = "horzopen" // 水平百叶窗展开
+	HorzClose   TransitionType = "horzclose"
 )
 
 // 切片（slice）类
@@ -100,13 +100,13 @@ const (
 	VideoH265    VideoCodec = "libx265"    // H.265/HEVC，同质量体积更小
 	VideoVP9     VideoCodec = "libvpx-vp9" // WebM
 	VideoVP8     VideoCodec = "libvpx"     // WebM（旧）
-	VideoTheora  VideoCodec = "libtheora" // Ogg
-	VideoGIF     VideoCodec = "gif"       // 动图
-	VideoProRes  VideoCodec = "prores_ks" // Apple ProRes（剪辑中间格式）
-	VideoNVENC   VideoCodec = "h264_nvenc"   // NVIDIA 硬件编码
-	VideoNVENC26 VideoCodec = "hevc_nvenc"   // NVIDIA 硬件 H.265
-	VideoQSV     VideoCodec = "h264_qsv"     // Intel 核显硬件编码
-	VideoAMF     VideoCodec = "h264_amf"     // AMD 硬件编码
+	VideoTheora  VideoCodec = "libtheora"  // Ogg
+	VideoGIF     VideoCodec = "gif"        // 动图
+	VideoProRes  VideoCodec = "prores_ks"  // Apple ProRes（剪辑中间格式）
+	VideoNVENC   VideoCodec = "h264_nvenc" // NVIDIA 硬件编码
+	VideoNVENC26 VideoCodec = "hevc_nvenc" // NVIDIA 硬件 H.265
+	VideoQSV     VideoCodec = "h264_qsv"   // Intel 核显硬件编码
+	VideoAMF     VideoCodec = "h264_amf"   // AMD 硬件编码
 )
 
 // ---------------------------------------------------------------------------
@@ -118,14 +118,14 @@ const (
 type AudioCodec string
 
 const (
-	AudioCopy  AudioCodec = "copy"        // 流拷贝，不重编码
-	AudioAAC   AudioCodec = "aac"         // AAC，兼容性最好（默认）
-	AudioMP3   AudioCodec = "libmp3lame"  // MP3
-	AudioOpus  AudioCodec = "libopus"     // Opus（WebM 默认）
-	AudioVorbis AudioCodec = "libvorbis" // Vorbis（Ogg）
-	AudioAC3   AudioCodec = "ac3"         // 杜比数字（环绕声）
-	AudioPCM   AudioCodec = "pcm_s16le"   // 无损 PCM（WAV）
-	AudioFLAC  AudioCodec = "flac"        // 无损压缩
+	AudioCopy   AudioCodec = "copy"       // 流拷贝，不重编码
+	AudioAAC    AudioCodec = "aac"        // AAC，兼容性最好（默认）
+	AudioMP3    AudioCodec = "libmp3lame" // MP3
+	AudioOpus   AudioCodec = "libopus"    // Opus（WebM 默认）
+	AudioVorbis AudioCodec = "libvorbis"  // Vorbis（Ogg）
+	AudioAC3    AudioCodec = "ac3"        // 杜比数字（环绕声）
+	AudioPCM    AudioCodec = "pcm_s16le"  // 无损 PCM（WAV）
+	AudioFLAC   AudioCodec = "flac"       // 无损压缩
 )
 
 // ---------------------------------------------------------------------------

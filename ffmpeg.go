@@ -28,6 +28,7 @@ func New() *FFmpeg {
 // CheckVersion 校验工具可用（执行 -version），只探测、不删除任何文件。
 func (f *FFmpeg) CheckVersion(toolPath string) error {
 	cmd := exec.Command(toolPath, "-version")
+	hideConsole(cmd)
 	if f.Dir != "" {
 		cmd.Dir = f.Dir
 	}
@@ -44,6 +45,7 @@ func (f *FFmpeg) CheckVersion(toolPath string) error {
 //   - 失败时只带输出末尾 15 行，完整日志对调用方通常是噪音。
 func (f *FFmpeg) run(name string, args []string) (string, error) {
 	cmd := exec.Command(name, args...)
+	hideConsole(cmd)
 	if f.Dir != "" {
 		cmd.Dir = f.Dir
 	}

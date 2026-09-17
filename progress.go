@@ -38,6 +38,7 @@ func (f *FFmpeg) runProgress(args []string, totalSec float64, onProgress Progres
 	if f.Dir != "" {
 		cmd.Dir = f.Dir
 	}
+	hideConsole(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", err

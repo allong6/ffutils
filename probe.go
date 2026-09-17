@@ -11,16 +11,16 @@ import (
 type VideoStream struct {
 	Width     int     `json:"width"`
 	Height    int     `json:"height"`
-	Duration  float64 `json:"duration"`    // 秒
-	FrameRate float64 `json:"frame_rate"`  // 帧率（已换算，如 29.97）
-	Bitrate   int     `json:"bit_rate"`    // bps
+	Duration  float64 `json:"duration"`   // 秒
+	FrameRate float64 `json:"frame_rate"` // 帧率（已换算，如 29.97）
+	Bitrate   int     `json:"bit_rate"`   // bps
 	Codec     string  `json:"codec_name"`
 }
 
 // AudioStream 描述音频流信息，无音频流时为 nil。
 type AudioStream struct {
-	Duration   float64 `json:"duration"`  // 秒
-	Bitrate    int     `json:"bit_rate"`  // bps
+	Duration   float64 `json:"duration"` // 秒
+	Bitrate    int     `json:"bit_rate"` // bps
 	SampleRate int     `json:"sample_rate"`
 	Channels   int     `json:"channels"`
 	Codec      string  `json:"codec_name"`

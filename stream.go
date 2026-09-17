@@ -58,7 +58,7 @@ type FrameWriterOptions struct {
 // （JPEG/PNG 等完整编码图，ffmpeg 按内容自动识别），写完后 Close 得到视频。
 // 典型用法见 NewFrameWriter 的示例。
 type FrameWriter struct {
-	cmd  *exec.Cmd
+	cmd   *exec.Cmd
 	stdin io.WriteCloser
 	done  chan error
 }
@@ -101,6 +101,7 @@ func (f *FFmpeg) NewFrameWriter(opts FrameWriterOptions) (*FrameWriter, error) {
 	if f.Dir != "" {
 		cmd.Dir = f.Dir
 	}
+	hideConsole(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("创建输入管道失败: %w", err)

@@ -25,9 +25,13 @@ type EncodeOptions struct {
 	ExtraArgs []string
 }
 
-func (o EncodeOptions) videoCodec() VideoCodec { return VideoCodec(orDefault(string(o.VideoCodec), string(VideoH264))) }
-func (o EncodeOptions) preset() Preset         { return Preset(orDefault(string(o.Preset), string(PresetUltrafast))) }
-func (o EncodeOptions) pixFmt() string         { return orDefault(o.PixFmt, "yuv420p") }
+func (o EncodeOptions) videoCodec() VideoCodec {
+	return VideoCodec(orDefault(string(o.VideoCodec), string(VideoH264)))
+}
+func (o EncodeOptions) preset() Preset {
+	return Preset(orDefault(string(o.Preset), string(PresetUltrafast)))
+}
+func (o EncodeOptions) pixFmt() string { return orDefault(o.PixFmt, "yuv420p") }
 func (o EncodeOptions) audioRate() int {
 	if o.AudioRate > 0 {
 		return o.AudioRate
