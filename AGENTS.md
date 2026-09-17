@@ -57,6 +57,7 @@ go test ./...                    # 集成测试
 | `master` | 主分支：稳定发布基线，暂定直接跟随 base 推送 |
 | `base` | ffmpeg 功能基础定义分支：只包含 ffutils 库本身与测试，不引入任何 UI/TUI/交互层代码 |
 | `gui` | GUI 工具分支：基于 ffutils 的桌面应用（FFBox），**开始任何工作前先 `git merge base`** |
+| `ai` | AI 能力分支：基于 gui（FFBox + 一句话处理），开工前先 `git merge gui`；只写 AI 编排层（提示词/计划/校验），ffmpeg 能力缺口回 base 补 |
 
 ### 提交流向与基准
 
