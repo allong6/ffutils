@@ -105,3 +105,47 @@ func (f *FFmpeg) MixAudio(video string, tracks []MixTrack, output string, enc En
 	_, err = f.run(f.ffmpegBin(), args)
 	return err
 }
+// MixBackground 背景音乐混入：保留视频原声（音量 mainVol）并与 bgm
+// （音量 bgmVol，loop=true 时循环铺满）同时播放混合；视频无原声时
+// 等价于纯配乐。输出时长以视频为准。与 ReplaceAudio 的区别：后者
+// 丢弃原声，本方法混合保留。
+func (f *FFmpeg) MixBackground(video, bgm string, mainVol, bgmVol float64, loop bool, output string, enc EncodeOptions) error {
+	if mainVol <= 0 {
+		mainVol = 1
+	}
+	if bgmVol <= 0 {
+		bgmVol = 1
+	}
+	info, err := f.Probe(video)
+	if err != nil {
+		return fmt.Errorf("探测视频失败: %w", err)
+	}
+
+	args := []string{"-i", video}
+	if loop {
+		// demuxer 层循环 + 输出侧 -t 截断，配 amix duration=first
+		args = append(args, "-stream_loop", "-1")
+	}
+	args = append(args, "-i", bgm)
+
+	var filter string
+	if info.HasAudio {
+		filter = fmt.Sprintf(
+			"[0:a]volume=%.3f[ma];[1:a]volume=%.3f[ba];"+
+				"[ma][ba]amix=inputs=2:duration=first:normalize=0[a]",
+			mainVol, bgmVol)
+	} else {
+		filter = fmt.Sprintf("[1:a]volume=%.3f[a]", bgmVol)
+	}
+	args = append(args,
+		"-filter_complex", filter,
+		"-map", "0:v", "-map", "[a]",
+	)
+	if info.Duration > 0 {
+		args = append(args, "-t", fmt.Sprintf("%.3f", info.Duration))
+	}
+	args = append(args, enc.outputArgs()...)
+	args = append(args, output)
+	_, err = f.run(f.ffmpegBin(), args)
+	return err
+}

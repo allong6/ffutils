@@ -1078,3 +1078,41 @@ func TestXfadeConcat_AudioSelect(t *testing.T) {
 	// 硬切：时长 = 两段之和
 	assertDuration(t, ff, out, info.Duration, 0.5)
 }
+
+func TestMixBackground(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	// 有原声视频 + 短音乐循环铺满，原声 0.5 倍、配乐 1 倍
+	out := filepath.Join(dir, "mixbgm.mp4")
+	err := ff.MixBackground(clip(t, "2.mp4"), clip(t, "锣.mp3"), 0.5, 1, true, out, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("背景音乐混入应成功: %v", err)
+	}
+	assertFileExists(t, out)
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasAudio {
+		t.Fatal("混入后应有音轨")
+	}
+	// 时长以视频为准（2.mp4 ≈ 10.37s，锣.mp3 很短靠循环铺满）
+	assertDuration(t, ff, out, 10.37, 0.5)
+
+	// 无原声视频 + 配乐（等价纯配乐，验证无原声分支）
+	mute := filepath.Join(dir, "mute.mp4")
+	if err := ff.Mute(clip(t, "2.mp4"), mute); err != nil {
+		t.Fatal(err)
+	}
+	out2 := filepath.Join(dir, "mutebgm.mp4")
+	if err := ff.MixBackground(mute, clip(t, "锣.mp3"), 1, 0.5, true, out2, EncodeOptions{}); err != nil {
+		t.Fatalf("无原声配乐应成功: %v", err)
+	}
+	info2, err := ff.Probe(out2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info2.HasAudio {
+		t.Fatal("无原声视频配乐后应有音轨")
+	}
+}
