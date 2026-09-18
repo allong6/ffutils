@@ -175,19 +175,15 @@ func (f *FFmpeg) Remux(input, output string) error {
 	return f.Transcode(input, TranscodeOptions{VideoCodec: "copy", AudioCodec: "copy"}, output)
 }
 
-// Trim 截取时间范围 [start, end)（秒）为新文件，不重编码（流拷贝，关键帧对齐，
-// 起点可能略有偏移；需要帧精确时用 Transcode 并设置 TrimStart/TrimEnd）。
+// Trim 帧精确截取时间范围 [start, end)（秒）为新文件（重编码）。
+// -ss 放 -i 前做快速 seek，配合重编码在目标点精确起帧；
+// 编码参数用 Transcode 的默认值（按输出扩展名推断编码器）。
+// 需要不重编码的快速粗剪时自行用 Remux 类流拷贝（关键帧对齐）。
 func (f *FFmpeg) Trim(input string, start, end float64, output string) error {
 	if start < 0 || end <= start {
 		return fmt.Errorf("非法的时间范围 [%.3f, %.3f)", start, end)
 	}
-	args := []string{"-ss", fmt.Sprintf("%.3f", start), "-i", input}
-	if end > 0 {
-		args = append(args, "-t", fmt.Sprintf("%.3f", end-start))
-	}
-	args = append(args, "-c", "copy", "-y", output)
-	_, err := f.run(f.ffmpegBin(), args)
-	return err
+	return f.Transcode(input, TranscodeOptions{TrimStart: start, TrimEnd: end}, output)
 }
 
 // Mute 去掉音轨（不重编码视频）。

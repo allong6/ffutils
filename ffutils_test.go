@@ -446,8 +446,8 @@ func TestTrim(t *testing.T) {
 	if err := ff.Trim(clip(t, "3.mp4"), 10, 15.5, out); err != nil {
 		t.Fatal(err)
 	}
-	// 流拷贝按关键帧对齐，起点/终点都可能偏移一个 GOP（本素材约 1s），放宽容差
-	assertDuration(t, ff, out, 5.5, 1.0)
+	// 帧精确重编码：起点/终点都不再有关键帧对齐偏移
+	assertDuration(t, ff, out, 5.5, 0.3)
 }
 
 func TestMute(t *testing.T) {
@@ -620,6 +620,10 @@ func TestSetVolume(t *testing.T) {
 func TestHLS_RoundTrip(t *testing.T) {
 	ff := testFF(t)
 	src := shortClip(t, ff)
+	srcInfo, err := ff.Probe(src)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// 切 HLS
 	index := filepath.Join(outDir(t), "hls", "index.m3u8")
@@ -631,14 +635,36 @@ func TestHLS_RoundTrip(t *testing.T) {
 	}
 	assertFileExists(t, index)
 
-	// 本地 m3u8 合成回单文件：分片与索引同目录，用 Dir 定位
-	out := filepath.Join(outDir(t), "from_hls.mp4")
+	// ffprobe 能直接解析 HLS 索引（等价于播放器可播）：
+	// 时长≈源、音视频轨齐全。分片是相对路径，Probe 也要定位到索引目录
 	f2 := *ff
 	f2.Dir = filepath.Dir(index)
+	hlsInfo, err := f2.Probe("index.m3u8")
+	if err != nil {
+		t.Fatalf("ffprobe 解析 HLS 索引失败（播放器同样会失败）: %v", err)
+	}
+	if !hlsInfo.HasVideo || !hlsInfo.HasAudio {
+		t.Fatalf("HLS 应含音视频轨: video=%v audio=%v", hlsInfo.HasVideo, hlsInfo.HasAudio)
+	}
+	if d := hlsInfo.Duration - srcInfo.Duration; d < -0.5 || d > 0.5 {
+		t.Fatalf("HLS 总时长 %.2fs 与源 %.2fs 偏差过大", hlsInfo.Duration, srcInfo.Duration)
+	}
+
+	// 本地 m3u8 合成回单文件：分片与索引同目录，用 Dir 定位
+	out := filepath.Join(outDir(t), "from_hls.mp4")
 	if err := f2.FromHLS("index.m3u8", out); err != nil {
 		t.Fatal(err)
 	}
 	assertDuration(t, ff, out, 3.0, 0.3)
+	// 回合一致性：分辨率与源相同（内容一致性的机器可判部分）
+	outInfo, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outInfo.Video.Width != srcInfo.Video.Width || outInfo.Video.Height != srcInfo.Video.Height {
+		t.Fatalf("合成回的视频分辨率 %dx%d 应与源 %dx%d 一致",
+			outInfo.Video.Width, outInfo.Video.Height, srcInfo.Video.Width, srcInfo.Video.Height)
+	}
 }
 
 func TestTranscodeProgress(t *testing.T) {
