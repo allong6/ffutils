@@ -42,6 +42,9 @@ type AudioExtractOptions struct {
 	Bitrate string
 	// SampleRate 采样率，<=0 不指定
 	SampleRate int
+	// Start/End 只抽取该时间段（秒）；End<=0 表示到结尾，Start<=0 从头
+	Start float64
+	End   float64
 }
 
 func (o AudioExtractOptions) codecFor(output string) string {
@@ -60,9 +63,17 @@ func (o AudioExtractOptions) codecFor(output string) string {
 	}
 }
 
-// ExtractAudio 从媒体文件抽取音频流并转码输出。
+// ExtractAudio 从媒体文件抽取音频流并转码输出（可选时间段）。
 func (f *FFmpeg) ExtractAudio(path string, opts AudioExtractOptions, output string) error {
-	args := []string{"-i", path, "-vn", "-c:a", opts.codecFor(output)}
+	args := []string{"-i", path}
+	if opts.Start > 0 {
+		// seek 放 -i 后保证从精确时间点解码（音频解码快，代价可忽略）
+		args = append(args, "-ss", fmt.Sprintf("%.3f", opts.Start))
+	}
+	if opts.End > opts.Start {
+		args = append(args, "-t", fmt.Sprintf("%.3f", opts.End-opts.Start))
+	}
+	args = append(args, "-vn", "-c:a", opts.codecFor(output))
 	if opts.Bitrate != "" {
 		args = append(args, "-b:a", opts.Bitrate)
 	}

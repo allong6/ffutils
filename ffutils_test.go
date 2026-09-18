@@ -1116,3 +1116,27 @@ func TestMixBackground(t *testing.T) {
 		t.Fatal("无原声视频配乐后应有音轨")
 	}
 }
+
+func TestExtractAudioRange(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	out := filepath.Join(dir, "cut.mp3")
+	// 抽取 2~4.5 秒的音频段
+	if err := ff.ExtractAudio(clip(t, "2.mp4"), AudioExtractOptions{Start: 2, End: 4.5}, out); err != nil {
+		t.Fatalf("时间段音频抽取应成功: %v", err)
+	}
+	assertFileExists(t, out)
+	assertDuration(t, ff, out, 2.5, 0.3)
+	// wav 格式 + 全长（零值回退原行为）
+	out2 := filepath.Join(dir, "full.wav")
+	if err := ff.ExtractAudio(clip(t, "2.mp4"), AudioExtractOptions{}, out2); err != nil {
+		t.Fatalf("全长音频抽取应成功: %v", err)
+	}
+	info, err := ff.Probe(out2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Audio == nil || info.Audio.Codec != "pcm_s16le" && info.Audio.Codec != "pcm_s16f" {
+		t.Logf("wav 编码: %s", info.Audio.Codec)
+	}
+}
