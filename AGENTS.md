@@ -4,6 +4,18 @@
 是基于它构建的桌面应用 FFBox。本文档约束在本仓库中工作时应遵循的规则，
 **全分支共用同一份内容，不按分支维护不同版本**。
 
+## 文档索引（新会话必读）
+
+| 文档 | 内容 | 位置 |
+|---|---|---|
+| **本文档** | 开发规则/分支职责/红线/测试流程 | `AGENTS.md`（全分支统一） |
+| [README.md](README.md) | 项目全景：分支结构/API 总览/快速开始/文档索引 | `README.md`（base 定义） |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 技术架构：分层设计/文件结构/关键决策/安全体系 | `docs/`（base 定义） |
+| [gui/README.md](gui/README.md) | GUI 构建/CLI/预设/硬件/打包 | `gui/`（gui 分支） |
+| [docs/DESIGN.md](docs/DESIGN.md) | GUI 设计文档：双模式/里程碑 | `docs/`（gui 分支） |
+| [docs/TESTING.md](docs/TESTING.md) | 测试标准流程 L1-L4 | `docs/`（gui 分支） |
+| [license-server/README.md](license-server/README.md) | 激活平台部署/接口/安全 | `license-server/`（license 分支） |
+
 ## 构建与测试
 
 ```bash
