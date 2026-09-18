@@ -1140,3 +1140,113 @@ func TestExtractAudioRange(t *testing.T) {
 		t.Logf("wav 编码: %s", info.Audio.Codec)
 	}
 }
+
+// ---------- MultiCompose（通用多视频合成） ----------
+
+func TestMultiCompose_SequentialPreprocess(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	out := filepath.Join(dir, "mc_seq.mp4")
+	// A：2.mp4(10.37s) 取前 3s 变速 2x → 1.5s；B：3.mp4 取前 2s；
+	// fade 0.5s → 总时长 1.5+2-0.5=3.0s；输出归一到最大宽高 1280x974
+	err := ff.MultiCompose(MultiComposeOptions{
+		Clips: []ClipSpec{
+			{Path: clip(t, "2.mp4"), TrimEnd: 3, Speed: 2, Volume: 0.5},
+			{Path: clip(t, "3.mp4"), TrimEnd: 2},
+		},
+		Transitions: []Transition{{Type: Fade, Duration: 0.5}},
+	}, out)
+	if err != nil {
+		t.Fatalf("顺序合成应成功: %v", err)
+	}
+	assertFileExists(t, out)
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 1280 || info.Video.Height != 974 {
+		t.Fatalf("输出应归一到 1280x974: %dx%d", info.Video.Width, info.Video.Height)
+	}
+	assertDuration(t, ff, out, 3.0, 0.4)
+	if !info.HasAudio {
+		t.Fatal("两路都保留声音，成片应有音轨")
+	}
+}
+
+func TestMultiCompose_GridOverlay(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	out := filepath.Join(dir, "mc_grid.mp4")
+	// 分屏 2x1：A 静音、B 保留；之上叠一个小窗（2.mp4 前 1s，320x180，
+	// 半透明）——覆盖 grid+mute+overlay 组合路径
+	err := ff.MultiCompose(MultiComposeOptions{
+		Layout: LayoutGrid, Cols: 2, Rows: 1,
+		Clips: []ClipSpec{
+			{Path: clip(t, "2.mp4"), Mute: true},
+			{Path: clip(t, "3.mp4")},
+		},
+		Overlays: []OverlayLayer{
+			{Clip: ClipSpec{Path: clip(t, "2.mp4"), TrimEnd: 1},
+				X: 50, Y: 50, W: 320, H: 180, Opacity: 0.5},
+		},
+	}, out)
+	if err != nil {
+		t.Fatalf("网格+叠加应成功: %v", err)
+	}
+	assertFileExists(t, out)
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 格子=1280x974，2 列 → 2560x974
+	if info.Video.Width != 2560 || info.Video.Height != 974 {
+		t.Fatalf("分屏输出应为 2560x974: %dx%d", info.Video.Width, info.Video.Height)
+	}
+	if !info.HasAudio {
+		t.Fatal("第二路保留声音，成片应有音轨")
+	}
+}
+
+func TestMultiCompose_BGMLoopOnly(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	out := filepath.Join(dir, "mc_bgm.mp4")
+	// 全静音 + 循环配乐：时长以视频为准（2.mp4 ≈ 10.37s）
+	err := ff.MultiCompose(MultiComposeOptions{
+		Clips: []ClipSpec{{Path: clip(t, "2.mp4"), Mute: true}},
+		Audio: AudioSpec{Keep: []AudioPick{}, BGMPath: clip(t, "锣.mp3"), BGMLoop: true, BGMVolume: 0.6},
+	}, out)
+	if err != nil {
+		t.Fatalf("纯配乐合成应成功: %v", err)
+	}
+	assertFileExists(t, out)
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasAudio {
+		t.Fatal("应有配乐音轨")
+	}
+	assertDuration(t, ff, out, 10.37, 0.5)
+}
+
+func TestMultiCompose_ReverseCropRotate(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	out := filepath.Join(dir, "mc_rev.mp4")
+	// 单输入预处理组合：trim 前 2s → 裁 300x400 → 旋转 90° → 倒放
+	err := ff.MultiCompose(MultiComposeOptions{
+		Clips: []ClipSpec{{
+			Path:    clip(t, "3.mp4"),
+			TrimEnd: 2,
+			Crop:    &CropRect{W: 300, H: 400},
+			Rotate:  Rot90CW,
+			Reverse: true,
+		}},
+	}, out)
+	if err != nil {
+		t.Fatalf("预处理组合应成功: %v", err)
+	}
+	assertFileExists(t, out)
+	assertDuration(t, ff, out, 2.0, 0.4)
+}
