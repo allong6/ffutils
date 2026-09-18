@@ -637,8 +637,8 @@ func TestHLS_RoundTrip(t *testing.T) {
 
 	// ffprobe 能直接解析 HLS 索引（等价于播放器可播）：
 	// 时长≈源、音视频轨齐全。分片是相对路径，Probe 也要定位到索引目录
-	f2 := *ff
-	f2.Dir = filepath.Dir(index)
+	f2 := &FFmpeg{FFmpegPath: ff.FFmpegPath, FFprobePath: ff.FFprobePath,
+		Timeout: ff.Timeout, Dir: filepath.Dir(index)}
 	hlsInfo, err := f2.Probe("index.m3u8")
 	if err != nil {
 		t.Fatalf("ffprobe 解析 HLS 索引失败（播放器同样会失败）: %v", err)
@@ -1275,4 +1275,62 @@ func TestMultiCompose_ReverseCropRotate(t *testing.T) {
 	}
 	assertFileExists(t, out)
 	assertDuration(t, ff, out, 2.0, 0.4)
+}
+
+// ---------- 版本探测与旧版兼容 ----------
+
+func TestFFmpegVersion(t *testing.T) {
+	ff := testFF(t)
+	maj, min, ok := ff.Version()
+	if !ok {
+		t.Fatal("版本探测失败")
+	}
+	t.Logf("ffmpeg %d.%d", maj, min)
+	if maj < 4 || (maj == 4 && min < 4) {
+		t.Skipf("测试机 ffmpeg %d.%d 低于 4.4，能力标志按旧版处理", maj, min)
+	}
+	if !ff.HasXfade() || !ff.HasAmixNormalize() {
+		t.Fatal("4.4+ 应支持 xfade 与 amix normalize")
+	}
+}
+
+func TestLegacyCompat(t *testing.T) {
+	// 注入旧版本号（4.2）：所有兼容分支走旧路径，命令在 4.4 上同样合法
+	ff := testFF(t)
+	dir := outDir(t)
+
+	// 1) 旧版 amix 等价路径：混入配乐（两路预乘 2）
+	ff.setVersionForTest(4, 2)
+	out := filepath.Join(dir, "legacy_bgm.mp4")
+	if err := ff.MixBackground(clip(t, "2.mp4"), clip(t, "锣.mp3"), 0.5, 0.8, true, out, EncodeOptions{}); err != nil {
+		t.Fatalf("旧版混音路径应成功: %v", err)
+	}
+	assertFileExists(t, out)
+	assertDuration(t, ff, out, 10.37, 0.5)
+
+	// 2) 旧版多轨混音：MixAudio（含原声共 2 路，各预乘 2）
+	out2 := filepath.Join(dir, "legacy_mix.mp4")
+	err := ff.MixAudio(clip(t, "2.mp4"), []MixTrack{{Path: clip(t, "锣.mp3"), Volume: 0.5}}, out2, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("旧版多轨混音应成功: %v", err)
+	}
+	assertDuration(t, ff, out2, 10.37, 0.5)
+
+	// 3) 旧版宫格多音轨
+	out3 := filepath.Join(dir, "legacy_grid.mp4")
+	if err := ff.ComposeGridAudio([]string{clip(t, "1.mp4"), clip(t, "2.mp4")}, 2, 1,
+		[]GridAudio{{Index: 0}, {Index: 1, Volume: 0.5}}, out3, EncodeOptions{}); err != nil {
+		t.Fatalf("旧版宫格混音应成功: %v", err)
+	}
+
+	// 4) 旧版 xfade 降级：转场退化为硬切，时长=两段之和（2.mp4x2）
+	out4 := filepath.Join(dir, "legacy_concat.mp4")
+	err = ff.XfadeConcat(XfadeOptions{
+		Clips:       []string{clip(t, "2.mp4"), clip(t, "2.mp4")},
+		Transitions: []Transition{{Type: Fade, Duration: 0.5}},
+	}, out4, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("旧版拼接（降级硬切）应成功: %v", err)
+	}
+	assertDuration(t, ff, out4, 10.37*2, 0.5)
 }

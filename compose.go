@@ -124,7 +124,18 @@ func (f *FFmpeg) ComposeGridAudio(clips []string, cols, rows int, audio []GridAu
 
 	// 音轨选择链：各路统一采样格式后按 Volume 增益，amix 混成单轨。
 	// aresample/aformat 先归一（amix 要求各输入采样率/声道一致）。
+	// 旧版 amix（<4.4 无 normalize）默认每路乘 1/N：各路预乘 N 抵消。
 	var amixInputs strings.Builder
+	keptTotal := 0
+	for _, a := range audio {
+		if a.Index >= 0 && a.Index < len(clips) && infos[a.Index].HasAudio {
+			keptTotal++
+		}
+	}
+	boost := 1.0
+	if !f.HasAmixNormalize() {
+		boost = float64(keptTotal)
+	}
 	kept := 0
 	for _, a := range audio {
 		if a.Index < 0 || a.Index >= len(clips) || !infos[a.Index].HasAudio {
@@ -134,6 +145,7 @@ func (f *FFmpeg) ComposeGridAudio(clips []string, cols, rows int, audio []GridAu
 		if v <= 0 {
 			v = 1
 		}
+		v *= boost
 		chain := fmt.Sprintf("[%d:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo", a.Index)
 		if v != 1 {
 			chain += fmt.Sprintf(",volume=%.2f", v)
@@ -144,7 +156,7 @@ func (f *FFmpeg) ComposeGridAudio(clips []string, cols, rows int, audio []GridAu
 	}
 	if kept > 0 {
 		chains = append(chains, amixInputs.String()+
-			fmt.Sprintf("amix=inputs=%d:duration=longest:normalize=0[a]", kept))
+			fmt.Sprintf("amix=inputs=%d:duration=longest%s[a]", kept, f.amixNormalizeSuffix()))
 	}
 
 	args = append(args, "-filter_complex", strings.Join(chains, ";"), "-map", finalLabel)

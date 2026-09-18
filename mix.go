@@ -48,9 +48,37 @@ func (f *FFmpeg) MixAudio(video string, tracks []MixTrack, output string, enc En
 	var filter strings.Builder
 	var mixInputs []string
 
+	// amix 旧版（<4.4 无 normalize 选项）默认把每路乘 1/N：预计算总路数
+	//（原声 + 各轨 + 可能的补静音），各路音量预乘 N 抵消，保持响度不变
+	norm := f.HasAmixNormalize()
+	total := len(tracks) + btoi(info.HasAudio)
+	mixEndPre := 0.0
+	for _, raw := range tracks {
+		t := raw.normalized()
+		trimEnd := t.TrimOut
+		if trimEnd <= 0 {
+			trimEnd = 1 << 30
+		}
+		if end := t.StartAt + (trimEnd-t.TrimIn)/t.Speed; end > mixEndPre {
+			mixEndPre = end
+		}
+	}
+	if pad := videoDur - mixEndPre; pad > 0 {
+		total++
+	}
+	boost := 1.0
+	if !norm {
+		boost = float64(total)
+	}
+
 	// 视频原声（如有）作为第 0 路参与混音
 	if info.HasAudio {
-		mixInputs = append(mixInputs, "[0:a]")
+		if norm {
+			mixInputs = append(mixInputs, "[0:a]")
+		} else {
+			filter.WriteString(fmt.Sprintf("[0:a]volume=%.3f[orig];", boost))
+			mixInputs = append(mixInputs, "[orig]")
+		}
 	}
 
 	mixEnd := 0.0 // 所有音轨（含延迟）结束的最大时刻，用于判断是否需要补静音
@@ -71,7 +99,7 @@ func (f *FFmpeg) MixAudio(video string, tracks []MixTrack, output string, enc En
 			filter.WriteString(fmt.Sprintf(",atempo=%.3f", t.Speed))
 		}
 		delayMS := int(t.StartAt * 1000)
-		filter.WriteString(fmt.Sprintf(",adelay=%d|%d,volume=%.3f[a%d];", delayMS, delayMS, t.Volume, i+1))
+		filter.WriteString(fmt.Sprintf(",adelay=%d|%d,volume=%.3f[a%d];", delayMS, delayMS, t.Volume*boost, i+1))
 		mixInputs = append(mixInputs, fmt.Sprintf("[a%d]", i+1))
 
 		// 该轨在成片中的结束时刻 = 延迟 + 倍速后的有效时长（变速使时长缩为 1/speed）
@@ -90,7 +118,7 @@ func (f *FFmpeg) MixAudio(video string, tracks []MixTrack, output string, enc En
 	}
 
 	filter.WriteString(strings.Join(mixInputs, ""))
-	filter.WriteString(fmt.Sprintf("amix=inputs=%d:normalize=0[outa]", len(mixInputs)))
+	filter.WriteString(fmt.Sprintf("amix=inputs=%d%s[outa]", len(mixInputs), f.amixNormalizeSuffix()))
 	// 统一采样率，避免不同源采样率导致的加速/降速问题
 	filter.WriteString(";[outa]aformat=sample_rates=44100[outa]")
 	filterStr := filter.String()
@@ -130,10 +158,14 @@ func (f *FFmpeg) MixBackground(video, bgm string, mainVol, bgmVol float64, loop 
 
 	var filter string
 	if info.HasAudio {
+		// 旧版 amix（无 normalize）默认每路乘 1/2：两路各预乘 2 抵消
+		if !f.HasAmixNormalize() {
+			mainVol, bgmVol = mainVol*2, bgmVol*2
+		}
 		filter = fmt.Sprintf(
 			"[0:a]volume=%.3f[ma];[1:a]volume=%.3f[ba];"+
-				"[ma][ba]amix=inputs=2:duration=first:normalize=0[a]",
-			mainVol, bgmVol)
+				"[ma][ba]amix=inputs=2:duration=first%s[a]",
+			mainVol, bgmVol, f.amixNormalizeSuffix())
 	} else {
 		filter = fmt.Sprintf("[1:a]volume=%.3f[a]", bgmVol)
 	}

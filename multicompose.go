@@ -375,17 +375,30 @@ func (f *FFmpeg) MultiCompose(opts MultiComposeOptions, output string) error {
 	case !hasKept && opts.Audio.BGMPath == "":
 		audioMap = nil
 	case opts.Layout == LayoutGrid && hasKept:
-		// 同屏混音：保留路归一后 amix（不自动衰减）
+		// 同屏混音：保留路归一后 amix。旧版（<4.4 无 normalize）各路
+		// 音量预乘路数抵消默认的 1/N 衰减
 		var inputs []string
+		keptTotal := 0
+		for i := range opts.Clips {
+			if keep[i] && infos[i].HasAudio && !opts.Clips[i].Mute {
+				keptTotal++
+			}
+		}
+		boost := 1.0
+		if !f.HasAmixNormalize() {
+			boost = float64(keptTotal)
+		}
 		for i := range opts.Clips {
 			if !keep[i] || !infos[i].HasAudio || opts.Clips[i].Mute {
 				continue
 			}
-			chains = append(chains, clipAudioChain(i, &opts.Clips[i])+fmt.Sprintf("[a%d]", i))
+			cs := opts.Clips[i]
+			cs.Volume *= boost
+			chains = append(chains, clipAudioChain(i, &cs)+fmt.Sprintf("[a%d]", i))
 			inputs = append(inputs, fmt.Sprintf("[a%d]", i))
 		}
 		chains = append(chains, strings.Join(inputs, "")+
-			fmt.Sprintf("amix=inputs=%d:duration=longest:normalize=0[a]", len(inputs)))
+			fmt.Sprintf("amix=inputs=%d:duration=longest%s[a]", len(inputs), f.amixNormalizeSuffix()))
 		audioMap = []string{"-map", "[a]"}
 	default:
 		// Sequential 的时间线拼接（Grid 无保留路时也走静音轨垫底）。
@@ -458,19 +471,29 @@ func (f *FFmpeg) MultiCompose(opts MultiComposeOptions, output string) error {
 		if v <= 0 {
 			v = 1
 		}
+		// 旧版 amix（<4.4 无 normalize）默认每路乘 1/2：配乐预乘 2 抵消，
+		// 混音分支的基础轨 [a] 同样加 2 倍增益链
+		bgmBoost := 1.0
+		if !f.HasAmixNormalize() {
+			bgmBoost = 2
+		}
 		chains = append(chains, fmt.Sprintf(
 			"[%d:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo", bgmIdx))
-		if v != 1 {
-			chains[len(chains)-1] += fmt.Sprintf(",volume=%.2f", v)
+		if v*bgmBoost != 1 {
+			chains[len(chains)-1] += fmt.Sprintf(",volume=%.2f", v*bgmBoost)
 		}
 		chains[len(chains)-1] += "[bgm]"
 		if audioMap == nil {
 			// 纯配乐：用成片时长的静音轨做 amix 的 first，保证时长精确
 			chains = append(chains, fmt.Sprintf("aevalsrc=0:d=%.3f[sa]", totalDur))
-			chains = append(chains, "[sa][bgm]amix=inputs=2:duration=first:normalize=0[a]")
+			chains = append(chains, "[sa][bgm]amix=inputs=2:duration=first"+f.amixNormalizeSuffix()+"[a]")
 			audioMap = []string{"-map", "[a]"}
-		} else {
+		} else if f.HasAmixNormalize() {
 			chains = append(chains, "[a][bgm]amix=inputs=2:duration=first:normalize=0[a2]")
+			audioMap = []string{"-map", "[a2]"}
+		} else {
+			chains = append(chains, "[a]volume=2.00[aa]")
+			chains = append(chains, "[aa][bgm]amix=inputs=2:duration=first[a2]")
 			audioMap = []string{"-map", "[a2]"}
 		}
 	}

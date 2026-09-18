@@ -115,6 +115,11 @@ func (f *FFmpeg) XfadeConcat(opts XfadeOptions, output string, enc EncodeOptions
 			i, fps, width, height, i))
 
 		trans := transitionAt(opts.Transitions, i)
+		if trans.Type != "" && trans.Duration > 0 && !f.HasXfade() {
+			// ffmpeg <4.3 无 xfade 滤镜：转场降级为硬切（音画对齐逻辑
+			// 随之按硬切计算，保持一致）
+			trans = Transition{}
+		}
 		isLast := i == n-1
 		nextLabel := fmt.Sprintf("x%d", i+1)
 

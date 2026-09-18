@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,6 +19,12 @@ type FFmpeg struct {
 	Dir string
 	// Timeout 单次命令超时，<=0 表示不限制
 	Timeout time.Duration
+
+	// 版本探测缓存（见 version.go）：能力标志据此选择等价/降级路径
+	verOnce  sync.Once
+	verMajor int
+	verMinor int
+	verOK    bool
 }
 
 // New 返回使用环境变量中 ffmpeg/ffprobe 的实例。
