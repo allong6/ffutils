@@ -106,6 +106,37 @@ func (f *FFmpeg) ExtractFrames(input string, start, end, stepPerSec float64, pat
 	return countPattern(pattern), nil
 }
 
+// ExtractFramesEveryN 每 N 帧保留一帧的帧序列降采样（N=2 即 1/2 帧、
+// N=4 即 1/4 帧，按帧序号取模，与源帧率无关）。start/end 与 pattern
+// 语义同 ExtractFrames；everyN<=1 时退化为全量导出。
+// 返回实际写出的图片数量。
+func (f *FFmpeg) ExtractFramesEveryN(input string, start, end float64, everyN int, pattern string) (int, error) {
+	if everyN <= 1 {
+		return f.ExtractFrames(input, start, end, 0, pattern)
+	}
+	if end > 0 && end <= start {
+		return 0, fmt.Errorf("非法时间段 [%.3f, %.3f)", start, end)
+	}
+	if !strings.Contains(pattern, "%") {
+		return 0, fmt.Errorf("输出模板必须包含序号占位符（如 frame_%%04d.jpg）: %s", pattern)
+	}
+
+	args := []string{"-i", input}
+	if start > 0 {
+		args = append(args, "-ss", fmt.Sprintf("%.3f", start))
+	}
+	if end > 0 {
+		args = append(args, "-t", fmt.Sprintf("%.3f", end-start))
+	}
+	// select 表达式整体加单引号，避免其中的逗号被滤镜图解析为分隔符
+	args = append(args, "-vf", fmt.Sprintf("select='not(mod(n,%d))'", everyN),
+		"-vsync", "vfr", "-y", pattern)
+	if _, err := f.run(f.ffmpegBin(), args); err != nil {
+		return 0, err
+	}
+	return countPattern(pattern), nil
+}
+
 // countPattern 统计模板实际落盘的文件数（%04d -> *）。
 func countPattern(pattern string) int {
 	dir := filepath.Dir(pattern)

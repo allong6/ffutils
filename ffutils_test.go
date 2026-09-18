@@ -960,3 +960,121 @@ func TestXfadeConcatMixedAudio(t *testing.T) {
 	// 10.37 + 10.37 - 0.5 ≈ 20.24
 	assertDuration(t, ff, out, 20.24, 0.3)
 }
+
+// ---------- 帧序列降采样 / 音量探测 / 合成声音选择 ----------
+
+func TestExtractFrames_EveryN(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	for _, sub := range []string{"full", "half", "quarter"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	full, err := ff.ExtractFrames(clip(t, "1.mp4"), 0, 0, 0, filepath.Join(dir, "full", "f_%04d.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	half, err := ff.ExtractFramesEveryN(clip(t, "1.mp4"), 0, 0, 2, filepath.Join(dir, "half", "f_%04d.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	quarter, err := ff.ExtractFramesEveryN(clip(t, "1.mp4"), 0, 0, 4, filepath.Join(dir, "quarter", "f_%04d.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("全量 %d · 1/2 %d · 1/4 %d", full, half, quarter)
+	// 取模降采样：1/2 约为全量的一半（±2 帧容差），1/4 更少
+	if half == 0 || half > full {
+		t.Fatalf("1/2 帧数量异常: full=%d half=%d", full, half)
+	}
+	if half*2 < full-2 {
+		t.Fatalf("1/2 帧数量偏少: full=%d half=%d", full, half)
+	}
+	if quarter > half {
+		t.Fatalf("1/4 帧不应多于 1/2: half=%d quarter=%d", half, quarter)
+	}
+}
+
+func TestDetectVolume(t *testing.T) {
+	ff := testFF(t)
+	vs, err := ff.DetectVolume(clip(t, "1.mp4"))
+	if err != nil {
+		t.Fatalf("音量探测失败: %v", err)
+	}
+	t.Logf("mean=%.1f dB max=%.1f dB", vs.MeanDb, vs.MaxDb)
+	if vs.MeanDb > 0 || vs.MeanDb < -60 {
+		t.Fatalf("平均响度应在 -60~0 dB 区间: %.1f", vs.MeanDb)
+	}
+	if vs.MaxDb < vs.MeanDb {
+		t.Fatalf("峰值不应低于均值: mean=%.1f max=%.1f", vs.MeanDb, vs.MaxDb)
+	}
+	// 无音轨文件应报错而不是给出假数据
+	mute := filepath.Join(outDir(t), "mute.mp4")
+	if err := ff.Mute(clip(t, "1.mp4"), mute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ff.DetectVolume(mute); err == nil {
+		t.Fatal("无音轨文件应返回错误")
+	}
+}
+
+func TestComposeGrid_MultiAudio(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "grid2audio.mp4")
+	err := ff.ComposeGridAudio([]string{clip(t, "1.mp4"), clip(t, "2.mp4")}, 2, 1,
+		[]GridAudio{{Index: 0}, {Index: 1, Volume: 0.5}}, out, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("多音轨宫格应成功: %v", err)
+	}
+	assertFileExists(t, out)
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasAudio {
+		t.Fatal("多音轨合成结果应有音轨")
+	}
+	// 1.mp4 更长，画面取最长输入（音频 amix duration=longest 不截断）
+	assertDuration(t, ff, out, info.Duration, 0.5)
+}
+
+func TestComposeGrid_NoAudioKept(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "grid_noaudio.mp4")
+	err := ff.ComposeGridAudio([]string{clip(t, "1.mp4"), clip(t, "2.mp4")}, 2, 1,
+		nil, out, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("不保留声音的宫格应成功: %v", err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HasAudio {
+		t.Fatal("audio 为空时输出不应有音轨")
+	}
+}
+
+func TestXfadeConcat_AudioSelect(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "concat_sel.mp4")
+	// 只保留第二段声音且降为 0.5 倍；第一段补静音
+	err := ff.XfadeConcat(XfadeOptions{
+		Clips: []string{clip(t, "1.mp4"), clip(t, "2.mp4")},
+		Audio: []AudioPick{{Index: 1, Volume: 0.5}},
+	}, out, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("音轨选择拼接应成功: %v", err)
+	}
+	assertFileExists(t, out)
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasAudio {
+		t.Fatal("选择了第二段声音，成片应有音轨")
+	}
+	// 硬切：时长 = 两段之和
+	assertDuration(t, ff, out, info.Duration, 0.5)
+}

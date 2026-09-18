@@ -5,11 +5,33 @@ import (
 	"strings"
 )
 
+// GridAudio 宫格合成时保留的一路声音：Index 为输入序号，Volume 为音量
+// 倍率（1=原样，0.5=减半；<=0 按 1 处理）。
+type GridAudio struct {
+	Index  int
+	Volume float64
+}
+
 // ComposeGrid 宫格分屏：把多个视频按 cols×rows 网格同屏排列
 // （如 2 路左右分屏、4 路四宫格、9 路监控墙）。每个格子统一缩放到
 // 所有输入中的最大宽高，不足 cols×rows 的空位用黑块填充。
 // audioTrack 指定使用第几个输入的音轨（其余静默），默认 0；传 -1 表示输出无音轨。
 func (f *FFmpeg) ComposeGrid(clips []string, cols, rows int, audioTrack int, output string, enc EncodeOptions) error {
+	if audioTrack >= len(clips) {
+		return fmt.Errorf("audioTrack=%d 超出输入范围（共 %d 个）", audioTrack, len(clips))
+	}
+	var audio []GridAudio
+	if audioTrack >= 0 {
+		audio = []GridAudio{{Index: audioTrack}}
+	}
+	return f.ComposeGridAudio(clips, cols, rows, audio, output, enc)
+}
+
+// ComposeGridAudio 同 ComposeGrid，但可保留多路声音并分别调音量
+// （各路同时播放、自动混合）。audio 为空时输出无音轨；所选输入无音轨
+// 或序号越界时跳过该路（全部无效则输出无音轨）。
+// 混合用 amix normalize=0：不做自动衰减，各路实际响度只由 Volume 决定。
+func (f *FFmpeg) ComposeGridAudio(clips []string, cols, rows int, audio []GridAudio, output string, enc EncodeOptions) error {
 	if cols < 1 || rows < 1 {
 		return fmt.Errorf("行列数必须 >=1: %dx%d", cols, rows)
 	}
@@ -100,14 +122,34 @@ func (f *FFmpeg) ComposeGrid(clips []string, cols, rows int, audioTrack int, out
 		chains = append(chains, strings.Join(rowLabels, "")+fmt.Sprintf("vstack=inputs=%d[v]", rows))
 	}
 
+	// 音轨选择链：各路统一采样格式后按 Volume 增益，amix 混成单轨。
+	// aresample/aformat 先归一（amix 要求各输入采样率/声道一致）。
+	var amixInputs strings.Builder
+	kept := 0
+	for _, a := range audio {
+		if a.Index < 0 || a.Index >= len(clips) || !infos[a.Index].HasAudio {
+			continue
+		}
+		v := a.Volume
+		if v <= 0 {
+			v = 1
+		}
+		chain := fmt.Sprintf("[%d:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo", a.Index)
+		if v != 1 {
+			chain += fmt.Sprintf(",volume=%.2f", v)
+		}
+		chains = append(chains, chain+fmt.Sprintf("[av%d]", a.Index))
+		amixInputs.WriteString(fmt.Sprintf("[av%d]", a.Index))
+		kept++
+	}
+	if kept > 0 {
+		chains = append(chains, amixInputs.String()+
+			fmt.Sprintf("amix=inputs=%d:duration=longest:normalize=0[a]", kept))
+	}
+
 	args = append(args, "-filter_complex", strings.Join(chains, ";"), "-map", finalLabel)
-	if audioTrack >= 0 {
-		if audioTrack >= len(clips) {
-			return fmt.Errorf("audioTrack=%d 超出输入范围（共 %d 个）", audioTrack, len(clips))
-		}
-		if infos[audioTrack].HasAudio {
-			args = append(args, "-map", fmt.Sprintf("%d:a:0", audioTrack))
-		}
+	if kept > 0 {
+		args = append(args, "-map", "[a]")
 	}
 	// 各输入时长不同时以最长的为准，短的画面冻结（默认行为），不截断
 	args = append(args, enc.outputArgs()...)
