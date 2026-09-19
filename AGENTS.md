@@ -9,7 +9,7 @@
 | 文档 | 内容 | 位置 |
 |---|---|---|
 | **本文档** | 开发规则/分支职责/红线/测试流程 | `AGENTS.md`（全分支统一） |
-| [docs/STATUS.md](docs/STATUS.md) | **项目状态快照：分支进度/最近完成/待办/环境**（新会话先读） | `docs/`（gui/ai 维护） |
+| [docs/STATUS.md](docs/STATUS.md) | **项目状态快照：分支进度/最近完成/待办/环境 + 新会话上手 SOP**（新会话先读） | `docs/`（gui 起维护，随分支同步） |
 | [README.md](README.md) | 项目全景：分支结构/API 总览/快速开始/文档索引 | `README.md`（base 定义） |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 技术架构：分层设计/文件结构/关键决策/安全体系 | `docs/`（base 定义） |
 | [gui/README.md](gui/README.md) | GUI 构建/CLI/预设/硬件/打包 | `gui/`（gui 分支） |
