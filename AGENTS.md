@@ -120,20 +120,27 @@ go test ./...                    # 集成测试
 - **预设持久化**在 `~/.ffbox/config.json` 的 presets 字段，不另建存储。
 - **硬件编码探测**结果只做 UI 展示缓存（App.hwOnce），不落盘。
 
-## 测试标准流程（详见 gui 分支 docs/TESTING.md）
+## 测试规范（详见 gui 分支 docs/TESTING.md——分层定义/命令/产物）
 
-- 改动验收走 L1→L2 递进：`powershell -File gui\scripts\test-all.ps1` 一键跑
-  L1（base/service/gui Go 测试）+ L2（前端静态检查 frontend-check.mjs +
-  AI 页交互模拟 ai-front-sim.mjs）+ L3（CLI 冒烟）。发布或大改后再跑
-  L4（GUI 十一场景，见 gui/testbridge/README.md）。
-- 前端改动必须过 L2 检查（ID/方法交叉校验、标签平衡 div/section/aside
-  ——曾因 section 未闭合导致整页布局崩塌而检查未拦住）。
-- L4 报告与截图固定在 test/output/screenshots/，机器不可判项列 checkbox 交人工。
+测试分四层，**执行时机与范围**（谁在什么场景必须跑什么）：
+
+| 层 | 验证什么 | 怎么验证 | 执行时机 |
+|---|---|---|---|
+| L1 代码层 | base 库/service/绑定的 Go 行为 | `go test` 类测试（base 每个公开 API 至少 1 个真实执行用例，断言文件/时长/分辨率/编码器；归因类问题先跑基准命令拿双版本数据） | 每次代码改动，提交前 |
+| L2 前端静态+模拟 | html/js/css 完整性与 AI 页交互逻辑 | `frontend-check.mjs`（ID/方法交叉、标签平衡 div/section/aside）+ `ai-front-sim.mjs`（无头驱动真实事件处理器的场景模拟） | 每次 `gui/frontend/dist/` 改动，提交前 |
+| L4a 布局验证 | 真实渲染下的布局样式 | **构建 exe + MCP 截图核对**（左右双栏/页签对位/模式显隐）；MCP 不可用时构建启动留用户验证并注明"未视觉核对" | 涉及 html/css/布局/显隐逻辑的改动，提交前 |
+| L4b 功能交互 | 真实渲染下的功能流转 | **构建 exe + MCP 驱动**核心路径并截图存档；MCP 不可用时用 ai-front-sim 类模拟兜底；AI 对话另跑 live 测试（AI_TEST_KEY） | 新功能/交互改动，交付前 |
+
+- L1-L3 一键：`powershell -File gui\scripts\test-all.ps1`；L4c 全场景
+  （发布前/大改后）见 gui/testbridge/README.md。
+- 产物：自动测试 `test/output/<用例名>/`；MCP 截图
+  `test/output/screenshots/<功能名>_<日期>.png`；机器不可判项进
+  test/output/REVIEW.md 人工清单（仅保留未确认项）。
 
 ## 界面改动的提交与交付纪律（2026-09-19 起，用户明确要求）
 
 1. **提交前必须验证布局样式**：凡涉及 `gui/frontend/dist/`（html/js/css）
-   的改动，跑过 L2/模拟后还必须**构建并启动应用核对布局**：
+   的改动，跑过 L2/模拟后还必须**构建并启动应用核对布局**（L4a）：
    `go build -tags desktop,production -o <临时exe> .` 后运行，确认
    整体结构（左右双栏、页签行对位、右栏双视图）未被破坏——静态检查
    无法发现视觉性布局崩塌。有 computer-use MCP 时附截图，不可用时
