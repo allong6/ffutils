@@ -9,10 +9,14 @@
 | 文档 | 内容 | 位置 |
 |---|---|---|
 | **本文档** | 开发规则/分支职责/红线/测试流程 | `AGENTS.md`（全分支统一） |
+| [docs/STATUS.md](docs/STATUS.md) | **项目状态快照：分支进度/最近完成/待办/环境**（新会话先读） | `docs/`（gui/ai 维护） |
 | [README.md](README.md) | 项目全景：分支结构/API 总览/快速开始/文档索引 | `README.md`（base 定义） |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 技术架构：分层设计/文件结构/关键决策/安全体系 | `docs/`（base 定义） |
 | [gui/README.md](gui/README.md) | GUI 构建/CLI/预设/硬件/打包 | `gui/`（gui 分支） |
 | [docs/DESIGN.md](docs/DESIGN.md) | GUI 设计文档：双模式/里程碑 | `docs/`（gui 分支） |
+| [docs/FEATURES.md](docs/FEATURES.md) | 功能清单：各页签能力/组合语义/输出规则 | `docs/`（gui 分支） |
+| [docs/UI-GUIDE.md](docs/UI-GUIDE.md) | 开发样式说明：布局/标题体系/组件规范 | `docs/`（gui 分支） |
+| [docs/AI.md](docs/AI.md) | AI 一句话处理：需求契约/提示词/执行映射 | `docs/`（ai 分支） |
 | [docs/TESTING.md](docs/TESTING.md) | 测试标准流程 L1-L4 | `docs/`（gui 分支） |
 | [license-server/README.md](license-server/README.md) | 激活平台部署/接口/安全 | `license-server/`（license 分支） |
 
@@ -119,8 +123,23 @@ go test ./...                    # 集成测试
 ## 测试标准流程（详见 gui 分支 docs/TESTING.md）
 
 - 改动验收走 L1→L2 递进：`powershell -File gui\scripts\test-all.ps1` 一键跑
-  L1（base/service/gui Go 测试）+ L2（前端静态检查 frontend-check.mjs）
-  + L3（CLI 冒烟）。发布或大改后再跑 L4（GUI 十一场景，见
-  gui/testbridge/README.md）。
-- 前端改动必须过 L2 四项检查（ID/方法交叉校验历史两次事故来源）。
+  L1（base/service/gui Go 测试）+ L2（前端静态检查 frontend-check.mjs +
+  AI 页交互模拟 ai-front-sim.mjs）+ L3（CLI 冒烟）。发布或大改后再跑
+  L4（GUI 十一场景，见 gui/testbridge/README.md）。
+- 前端改动必须过 L2 检查（ID/方法交叉校验、标签平衡 div/section/aside
+  ——曾因 section 未闭合导致整页布局崩塌而检查未拦住）。
 - L4 报告与截图固定在 test/output/screenshots/，机器不可判项列 checkbox 交人工。
+
+## 界面改动的提交与交付纪律（2026-09-19 起，用户明确要求）
+
+1. **提交前必须验证布局样式**：凡涉及 `gui/frontend/dist/`（html/js/css）
+   的改动，跑过 L2/模拟后还必须**构建并启动应用核对布局**：
+   `go build -tags desktop,production -o <临时exe> .` 后运行，确认
+   整体结构（左右双栏、页签行对位、右栏双视图）未被破坏——静态检查
+   无法发现视觉性布局崩塌。有 computer-use MCP 时附截图，不可用时
+   在交付说明中注明"布局未经人工核对"。
+2. **任务完成后必须编译打包并打开供用户验证**：每个界面类任务收尾时
+   构建（`wails build` 或上述 go build）并启动应用留给用户检查，
+   不要只交付代码。
+3. 功能增删同步更新 docs/FEATURES.md 与 docs/UI-GUIDE.md；
+   项目状态变化（里程碑完成/待办/环境变更）更新 docs/STATUS.md。
