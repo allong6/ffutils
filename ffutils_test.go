@@ -1334,3 +1334,59 @@ func TestLegacyCompat(t *testing.T) {
 	}
 	assertDuration(t, ff, out4, 10.37*2, 0.5)
 }
+
+func TestPiPMainOutlivesPip(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	// 小窗比主画面短：主画面继续播（hold 定格 / hide 消失），不随小窗停止
+	pip := filepath.Join(dir, "short.mp4")
+	if err := ff.Transcode(clip(t, "2.mp4"), TranscodeOptions{TrimEnd: 2}, pip); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		opt  PiPOptions
+	}{{"hold", PiPOptions{Scale: 0.25, PipEnd: PipEndHold}},
+		{"hide", PiPOptions{Scale: 0.25, PipEnd: PipEndHide}}} {
+		out := filepath.Join(dir, "pip_"+tc.name+".mp4")
+		if err := ff.PictureInPicture(clip(t, "2.mp4"), pip, tc.opt, out, EncodeOptions{}); err != nil {
+			t.Fatalf("%s 应成功: %v", tc.name, err)
+		}
+		// 输出时长以主画面为准（2.mp4 ≈ 10.37s），而非小窗的 2s
+		assertDuration(t, ff, out, 10.37, 0.5)
+	}
+}
+
+func TestGridShortest(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	// 一短一长：Shortest 应按短的（3.mp4 截 2s）截断
+	short := filepath.Join(dir, "short.mp4")
+	if err := ff.Transcode(clip(t, "3.mp4"), TranscodeOptions{TrimEnd: 2}, short); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "grid_short.mp4")
+	err := ff.ComposeGridOpts([]string{clip(t, "2.mp4"), short},
+		GridOptions{Cols: 2, Rows: 1, Shortest: true}, out, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("Shortest 分屏应成功: %v", err)
+	}
+	assertDuration(t, ff, out, 2.0, 0.5)
+}
+
+func TestToGIFSize(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	out := filepath.Join(dir, "gif_opt.gif")
+	if err := ff.ToGIF(clip(t, "2.mp4"), 1, 3, 320, 10, out); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("优化后 GIF 体积: %d KB（同参数旧实现约 947KB）", st.Size()/1024)
+	if st.Size() > 850*1024 { // 原 ~947KB，优化后应明显更小
+		t.Fatalf("GIF 体积应明显小于旧实现: %d KB", st.Size()/1024)
+	}
+}

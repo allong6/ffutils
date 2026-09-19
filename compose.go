@@ -27,11 +27,20 @@ func (f *FFmpeg) ComposeGrid(clips []string, cols, rows int, audioTrack int, out
 	return f.ComposeGridAudio(clips, cols, rows, audio, output, enc)
 }
 
-// ComposeGridAudio 同 ComposeGrid，但可保留多路声音并分别调音量
-// （各路同时播放、自动混合）。audio 为空时输出无音轨；所选输入无音轨
-// 或序号越界时跳过该路（全部无效则输出无音轨）。
-// 混合用 amix normalize=0：不做自动衰减，各路实际响度只由 Volume 决定。
-func (f *FFmpeg) ComposeGridAudio(clips []string, cols, rows int, audio []GridAudio, output string, enc EncodeOptions) error {
+// GridOptions 宫格合成选项（零值均为合理默认）。
+type GridOptions struct {
+	Cols, Rows int
+	Audio      []GridAudio
+	// Shortest 时长基准：false（默认）以最长输入为准（短画面定格）；
+	// true 以最短输入为准（其余超出部分截断，适合"都只播这么长"）
+	Shortest bool
+}
+
+// ComposeGridOpts 带选项的宫格合成（ComposeGrid/ComposeGridAudio 的
+// 完整版；后续新选项都加在这里）。
+func (f *FFmpeg) ComposeGridOpts(clips []string, o GridOptions, output string, enc EncodeOptions) error {
+	cols, rows := o.Cols, o.Rows
+	audio := o.Audio
 	if cols < 1 || rows < 1 {
 		return fmt.Errorf("行列数必须 >=1: %dx%d", cols, rows)
 	}
@@ -42,9 +51,10 @@ func (f *FFmpeg) ComposeGridAudio(clips []string, cols, rows int, audio []GridAu
 		return fmt.Errorf("输入数量 %d 超过网格容量 %d", len(clips), cols*rows)
 	}
 
-	// 探测全部输入，确定统一的格子尺寸与帧率，以及占位黑块应持续的时长
+	// 探测全部输入，确定统一的格子尺寸与帧率，以及合成时长基准
 	infos := make([]*ProbeResult, len(clips))
-	cellW, cellH, fps, maxDur := 0, 0, 0.0, 0.0
+	cellW, cellH, fps := 0, 0, 0.0
+	outDur := 0.0
 	for i, p := range clips {
 		info, err := f.Probe(p)
 		if err != nil {
@@ -60,8 +70,8 @@ func (f *FFmpeg) ComposeGridAudio(clips []string, cols, rows int, audio []GridAu
 		if info.Video.Height > cellH {
 			cellH = info.Video.Height
 		}
-		if info.Duration > maxDur {
-			maxDur = info.Duration
+		if i == 0 || (o.Shortest && info.Duration < outDur) || (!o.Shortest && info.Duration > outDur) {
+			outDur = info.Duration
 		}
 		if fps == 0 {
 			fps = info.Video.FrameRate
@@ -72,8 +82,8 @@ func (f *FFmpeg) ComposeGridAudio(clips []string, cols, rows int, audio []GridAu
 	}
 	cellW &^= 1
 	cellH &^= 1
-	if maxDur <= 0 {
-		maxDur = 1
+	if outDur <= 0 {
+		outDur = 1
 	}
 
 	var args []string
@@ -86,7 +96,7 @@ func (f *FFmpeg) ComposeGridAudio(clips []string, cols, rows int, audio []GridAu
 	}
 	for i := 0; i < padCount; i++ {
 		args = append(args, "-f", "lavfi", "-i",
-			fmt.Sprintf("color=black:s=%dx%d:r=%d:d=%.3f", cellW, cellH, int(fps), maxDur))
+			fmt.Sprintf("color=black:s=%dx%d:r=%d:d=%.3f", cellW, cellH, int(fps), outDur))
 	}
 
 	// 滤镜链分段收集，最终 join 成 filtergraph（避免尾部分号等格式问题）。
@@ -163,11 +173,22 @@ func (f *FFmpeg) ComposeGridAudio(clips []string, cols, rows int, audio []GridAu
 	if kept > 0 {
 		args = append(args, "-map", "[a]")
 	}
-	// 各输入时长不同时以最长的为准，短的画面冻结（默认行为），不截断
+	// Shortest：以最短输入为准，超出部分截断（默认以最长为准，短画面定格）
+	if o.Shortest {
+		args = append(args, "-t", fmt.Sprintf("%.3f", outDur))
+	}
 	args = append(args, enc.outputArgs()...)
 	args = append(args, output)
 	_, err := f.run(f.ffmpegBin(), args)
 	return err
+}
+
+// ComposeGridAudio 同 ComposeGrid，但可保留多路声音并分别调音量
+// （各路同时播放、自动混合）。audio 为空时输出无音轨；所选输入无音轨
+// 或序号越界时跳过该路（全部无效则输出无音轨）。
+// 混合用 amix normalize=0：不做自动衰减，各路实际响度只由 Volume 决定。
+func (f *FFmpeg) ComposeGridAudio(clips []string, cols, rows int, audio []GridAudio, output string, enc EncodeOptions) error {
+	return f.ComposeGridOpts(clips, GridOptions{Cols: cols, Rows: rows, Audio: audio}, output, enc)
 }
 
 // SplitScreen 双画面分屏的快捷方式（左右 1×2 或上下 2×1）。
@@ -190,7 +211,19 @@ type PiPOptions struct {
 	Opacity float64
 	// UsePipAudio 用小画面的音轨替换主画面音轨（默认保留主画面声音）
 	UsePipAudio bool
+	// PipEnd 小窗播完后的表现（小窗比主画面短时）：PipEndHold（默认）
+	// 定格在最后一帧；PipEndHide 小窗消失、主画面继续。
+	// 无论哪种，输出时长始终以主画面为准
+	PipEnd PipEndAction
 }
+
+// PipEndAction 小窗结束后的表现。
+type PipEndAction string
+
+const (
+	PipEndHold PipEndAction = "hold" // 定格最后一帧
+	PipEndHide PipEndAction = "hide" // 小窗消失，主画面继续
+)
 
 // PictureInPicture 画中画：主画面全屏，小画面叠加在角落（直播摄像头小窗、
 // 素材对比等场景）。输出时长以主画面为准。
@@ -231,7 +264,13 @@ func (f *FFmpeg) PictureInPicture(main, pip string, opts PiPOptions, output stri
 	if opts.Opacity > 0 && opts.Opacity < 1 {
 		pipChain += fmt.Sprintf(",format=rgba,colorchannelmixer=aa=%.2f", opts.Opacity)
 	}
-	filter := fmt.Sprintf("%s[p];[0:v][p]overlay=%s:shortest=1[v]", pipChain, pos)
+	// eof_action 决定小窗播完后的表现；不用 shortest=1（那会让主画面
+	// 随小窗提前结束——曾致"小窗停了主画面也停了"）
+	eof := "repeat" // hold：小窗定格在最后一帧
+	if opts.PipEnd == PipEndHide {
+		eof = "pass" // hide：小窗消失，主画面继续
+	}
+	filter := fmt.Sprintf("%s[p];[0:v][p]overlay=%s:eof_action=%s[v]", pipChain, pos, eof)
 
 	args := []string{"-i", main, "-i", pip,
 		"-filter_complex", filter, "-map", "[v]"}
