@@ -16,7 +16,7 @@
 | [docs/DESIGN.md](docs/DESIGN.md) | GUI 设计文档：双模式/里程碑 | `docs/`（gui 分支） |
 | [docs/FEATURES.md](docs/FEATURES.md) | 功能清单：各页签能力/组合语义/输出规则 | `docs/`（gui 分支） |
 | [docs/UI-GUIDE.md](docs/UI-GUIDE.md) | 开发样式说明：布局/标题体系/组件规范 | `docs/`（gui 分支） |
-| [docs/AI.md](docs/AI.md) | AI 一句话处理：需求契约/提示词/执行映射 | `docs/`（ai 分支） |
+| [docs/AI.md](docs/AI.md) | AI 一句话处理：需求契约/提示词/执行映射 | `docs/`（gui 分支） |
 | [docs/TESTING.md](docs/TESTING.md) | 测试标准流程 L1-L4 | `docs/`（gui 分支） |
 | [license-server/README.md](license-server/README.md) | 激活平台部署/接口/安全 | `license-server/`（license 分支） |
 
@@ -73,7 +73,7 @@ go test ./...                    # 集成测试
 | `master` | 主分支：稳定发布基线，暂定直接跟随 base 推送 |
 | `base` | ffmpeg 功能基础定义分支：只包含 ffutils 库本身与测试，不引入任何 UI/TUI/交互层代码 |
 | `gui` | GUI 工具分支：基于 ffutils 的桌面应用（FFBox），**开始任何工作前先 `git merge base`** |
-| `ai` | AI 能力分支：基于 gui（FFBox + 一句话处理），开工前先 `git merge gui`；只写 AI 编排层（提示词/计划/校验），ffmpeg 能力缺口回 base 补 |
+| ~~`ai`~~ | 已并回 gui（2026-09-20）：AI 一句话处理作为 gui 的一个功能项开发完成，独立分支撤销；后续 AI 功能直接在 gui 提交，ffmpeg 能力缺口仍回 base 补 |
 | `license` | 激活分支：基于 gui（激活门 + license-server 平台），开工前先 `git merge gui`；GUI 只内嵌公钥验签（私钥绝不进 GUI），平台代码在 license-server/ 独立模块可整体迁移 |
 
 ### 提交流向与基准
