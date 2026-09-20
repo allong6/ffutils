@@ -1390,3 +1390,61 @@ func TestToGIFSize(t *testing.T) {
 		t.Fatalf("GIF 体积应明显小于旧实现: %d KB", st.Size()/1024)
 	}
 }
+
+func TestToGIFWith(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	src := clip(t, "2.mp4")
+
+	// 低配参数：窄/低帧率/少色应明显小于高配参数
+	hi := filepath.Join(dir, "gifw_hi.gif")
+	lo := filepath.Join(dir, "gifw_lo.gif")
+	if err := ff.ToGIFWith(src, 1, 3, GIFOptions{Width: 640, Fps: 12, MaxColors: 192}, hi); err != nil {
+		t.Fatal(err)
+	}
+	if err := ff.ToGIFWith(src, 1, 3, GIFOptions{Width: 400, Fps: 8, MaxColors: 64}, lo); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, hi)
+	assertFileExists(t, lo)
+	info, err := ff.Probe(lo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Codec != "gif" || info.Video.Width != 400 {
+		t.Fatalf("低配输出应为 gif/400 宽，实际 %s/%d", info.Video.Codec, info.Video.Width)
+	}
+	hiSz, err := fileSize(hi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loSz, err := fileSize(lo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("高配 %d KB vs 低配 %d KB", hiSz/1024, loSz/1024)
+	if loSz >= hiSz {
+		t.Fatalf("低配(%d)应小于高配(%d)", loSz, hiSz)
+	}
+
+	// 零值全默认（640/10/128/bayer5）也应成功
+	def := filepath.Join(dir, "gifw_default.gif")
+	if err := ff.ToGIFWith(src, 0, 0, GIFOptions{}, def); err != nil {
+		t.Fatal(err)
+	}
+	info, err = ff.Probe(def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 640 {
+		t.Fatalf("默认宽度应为 640，实际 %d", info.Video.Width)
+	}
+}
+
+func fileSize(p string) (int64, error) {
+	st, err := os.Stat(p)
+	if err != nil {
+		return 0, err
+	}
+	return st.Size(), nil
+}

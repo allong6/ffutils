@@ -236,10 +236,50 @@ func (f *FFmpeg) Speed(input string, speed float64, output string, enc EncodeOpt
 	return err
 }
 
+// GIFOptions GIF 输出参数，零值字段使用默认（与旧 ToGIF 行为一致取向）。
+// 体积随宽度/帧率/颜色数近似线性变化，是 GIF 体积的三要素。
+type GIFOptions struct {
+	// Width 目标宽度（高度按比例），<=0 默认 640
+	Width int
+	// Fps 目标帧率，<=0 默认 10（动图常用 8~15）
+	Fps int
+	// MaxColors 调色板颜色数，<=0 默认 128；上限 256（GIF 格式上限）
+	MaxColors int
+	// Dither paletteuse 抖动算法（"bayer"/"sierra2_4a"/"none" 等），
+	// 空默认 "bayer"（有序抖动噪声少、LZW 可压缩性最好，实测比 sierra 小约一半）
+	Dither string
+	// BayerScale bayer 抖动尺度 1~5，数值越大抖动越轻、体积越小；<=0 默认 5
+	BayerScale int
+}
+
+func (o GIFOptions) withDefaults() GIFOptions {
+	o.Width = orDefaultInt(o.Width, 640)
+	o.Fps = orDefaultInt(o.Fps, 10)
+	o.MaxColors = orDefaultInt(o.MaxColors, 128)
+	if o.MaxColors > 256 {
+		o.MaxColors = 256
+	}
+	if o.Dither == "" {
+		o.Dither = "bayer"
+	}
+	if o.BayerScale <= 0 || o.BayerScale > 5 {
+		o.BayerScale = 5
+	}
+	return o
+}
+
 // ToGIF 把视频（片段）转为 GIF。palette 使用调色板两步法，颜色明显优于直接转。
-// 压缩优化（同画质体积约小 20~25%）：调色板聚焦变化区域并限 128 色、
+// 压缩优化（同画质体积约小 20~25%）：调色板聚焦变化区域并限色、
 // paletteuse 用有序抖动（bayer，比默认 sierra 抖动噪声更可压缩）。
+// 固定参数（640 宽/128 色/bayer5），需要体积/质量调节时用 ToGIFWith。
 func (f *FFmpeg) ToGIF(input string, start, end float64, width int, fps int, output string) error {
+	return f.ToGIFWith(input, start, end, GIFOptions{Width: width, Fps: fps}, output)
+}
+
+// ToGIFWith 带完整质量参数的 GIF 转换（调色板两步法）。
+// o 的零值字段取默认；Dither 为非 bayer 算法时 BayerScale 被忽略。
+func (f *FFmpeg) ToGIFWith(input string, start, end float64, o GIFOptions, output string) error {
+	o = o.withDefaults()
 	var seek []string
 	if start > 0 {
 		seek = append(seek, "-ss", fmt.Sprintf("%.3f", start))
@@ -247,21 +287,27 @@ func (f *FFmpeg) ToGIF(input string, start, end float64, width int, fps int, out
 	if end > start && end > 0 {
 		seek = append(seek, "-t", fmt.Sprintf("%.3f", end-start))
 	}
-	vf := fmt.Sprintf("fps=%d", orDefaultInt(fps, 15))
-	if width > 0 {
-		vf += fmt.Sprintf(",scale=%d:-1:flags=lanczos", width)
+	vf := fmt.Sprintf("fps=%d", o.Fps)
+	if o.Width > 0 {
+		vf += fmt.Sprintf(",scale=%d:-1:flags=lanczos", o.Width)
 	}
-	// 第一步：生成调色板（stats_mode=diff 动图友好；max_colors=128 降色）
+	// 第一步：生成调色板（stats_mode=diff 动图友好；max_colors 降色）
 	palette := output + ".palette.png"
-	args := append(seek, "-i", input, "-vf", vf+",palettegen=stats_mode=diff:max_colors=128", "-y", palette)
+	args := append(seek, "-i", input, "-vf",
+		fmt.Sprintf("%s,palettegen=stats_mode=diff:max_colors=%d", vf, o.MaxColors),
+		"-y", palette)
 	if _, err := f.run(f.ffmpegBin(), args); err != nil {
 		return err
 	}
 	defer func() { _ = os.Remove(palette) }()
-	// 第二步：用调色板映射颜色（bayer 有序抖动，bayer_scale=5 抖动较细）
+	// 第二步：用调色板映射颜色（bayer 有序抖动，bayer_scale 越大抖动越轻越好压缩）
+	paletteUse := fmt.Sprintf("paletteuse=dither=%s", o.Dither)
+	if o.Dither == "bayer" {
+		paletteUse += fmt.Sprintf(":bayer_scale=%d", o.BayerScale)
+	}
 	args = append([]string{}, seek...)
 	args = append(args, "-i", input, "-i", palette,
-		"-lavfi", vf+" [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=5", "-y", output)
+		"-lavfi", vf+" [x]; [x][1:v] "+paletteUse, "-y", output)
 	_, err := f.run(f.ffmpegBin(), args)
 	return err
 }
