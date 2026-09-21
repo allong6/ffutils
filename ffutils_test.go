@@ -843,13 +843,15 @@ func TestApplyVideoFilters_Combo(t *testing.T) {
 	}
 }
 
-func TestApplyVideoFilters_RotateThenCrop(t *testing.T) {
+func TestApplyVideoFilters_CropThenRotate(t *testing.T) {
 	ff := testFF(t)
 	src := filepath.Join(outDir(t), "fx_src2.mp4")
 	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "1", "-y", src}); err != nil {
 		t.Fatal(err)
 	}
-	// 先右转 90°（1280x720 -> 720x1280）再裁剪上半 720x640
+	// 裁剪坐标固定按原始画面（1280x720）定义：裁左上 720x640，再右转 90°
+	// -> 640x720。旧顺序（先旋转再裁剪）下该坐标会被误解到宽高互换后的
+	// 帧上——x/y 越界被 ffmpeg 静默钳制，裁出错误区域甚至报错。
 	out := filepath.Join(outDir(t), "fx_rotcrop.mp4")
 	err := ff.ApplyVideoFilters(src, VideoFilterChain{
 		Rotate: Rot90CW,
@@ -862,8 +864,8 @@ func TestApplyVideoFilters_RotateThenCrop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Video.Width != 720 || info.Video.Height != 640 {
-		t.Fatalf("旋转+裁剪应 720x640，实际 %dx%d", info.Video.Width, info.Video.Height)
+	if info.Video.Width != 640 || info.Video.Height != 720 {
+		t.Fatalf("裁剪(720x640)再旋转应 640x720，实际 %dx%d", info.Video.Width, info.Video.Height)
 	}
 }
 

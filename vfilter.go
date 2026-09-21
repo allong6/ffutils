@@ -35,17 +35,20 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 		return fmt.Errorf("裁剪宽高必须为正数: %dx%d", chain.Crop.W, chain.Crop.H)
 	}
 
-	// 视频滤镜链（按固定顺序拼接）
+	// 视频滤镜链（按固定顺序拼接：裁剪 → 旋转 → 淡入淡出 → 字幕）。
+	// 裁剪必须在旋转之前：CropRect 坐标按原始画面定义（调用方按源分辨率
+	// 换算），若先旋转再裁剪，宽高互换后坐标全部错位——ffmpeg 对越界 x/y
+	// 静默钳制会裁出错误区域，比例较大时直接报错失败。
 	var vf []string
+	if chain.Crop != nil {
+		vf = append(vf, fmt.Sprintf("crop=%d:%d:%d:%d", chain.Crop.W, chain.Crop.H, chain.Crop.X, chain.Crop.Y))
+	}
 	if chain.Rotate != "" {
 		r, err := rotateExpr(chain.Rotate)
 		if err != nil {
 			return err
 		}
 		vf = append(vf, r)
-	}
-	if chain.Crop != nil {
-		vf = append(vf, fmt.Sprintf("crop=%d:%d:%d:%d", chain.Crop.W, chain.Crop.H, chain.Crop.X, chain.Crop.Y))
 	}
 	if chain.Fade != nil && (chain.Fade.VideoIn > 0 || chain.Fade.VideoOut > 0) {
 		info, err := f.Probe(input)
