@@ -880,6 +880,40 @@ func TestApplyVideoFilters_None(t *testing.T) {
 	assertFileExists(t, out)
 }
 
+func TestApplyVideoFilters_WatermarkAlone(t *testing.T) {
+	// 回归：纯水印（视频链为空）与不透明水印（无透明度滤镜）曾拼出
+	// "[0:v][v0]"/"[1:v][w]" 的 label 直连空段，ffmpeg 报 Filter not found
+	ff := testFF(t)
+	wm := filepath.Join(outDir(t), "wm_alone.png")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-f", "lavfi", "-i", "color=blue:s=80x40", "-frames:v", "1", "-y", wm}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		opacity float64
+		rot     Rotation
+	}{{"alone_opaque", 1, ""}, {"alone_semi", 0.5, ""}, {"rot_opaque", 1, Rot90CW}} {
+		out := filepath.Join(outDir(t), "wm_"+tc.name+".mp4")
+		err := ff.ApplyVideoFilters(clip(t, "2.mp4"), VideoFilterChain{
+			Watermark: &Watermark{Path: wm, Position: PosTopLeft, Opacity: tc.opacity},
+			Rotate:    tc.rot,
+		}, out, EncodeOptions{})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		assertFileExists(t, out)
+		if tc.rot == Rot90CW {
+			info, err := ff.Probe(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Video.Width != 720 || info.Video.Height != 1280 {
+				t.Fatalf("%s 旋转后应 720x1280，实际 %dx%d", tc.name, info.Video.Width, info.Video.Height)
+			}
+		}
+	}
+}
+
 func TestExtractFrames_AllFrames(t *testing.T) {
 	ff := testFF(t)
 	dir := filepath.Join(outDir(t), "seq_all")

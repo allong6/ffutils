@@ -70,19 +70,27 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 	var args []string
 	if wm := chain.Watermark; wm != nil && wm.Path != "" {
 		// 水印需要第二输入，走 filter_complex：
-		//   [0:v] 视频链 [v0]；[1:v] (透明度处理) [w]；[v0][w]overlay [v]
+		//   [0:v] 视频链 [v0]；半透明时 [1:v] 透明度处理 [w] 再 overlay，
+		//   不透明时直接 [v0][1:v]overlay。
+		// 注意 label 直连（如 "[1:v][w]"）是非法 filter_graph——此前
+		// 纯水印（视频链为空）与 opacity=1（无透明度滤镜）都会拼出
+		// 空段，ffmpeg 报 "Filter not found"。
 		args = append(args, "-i", input, "-i", wm.Path)
-		var b strings.Builder
-		b.WriteString("[0:v]")
+		// filter_graph 分段组装（段间以 ";" 连接；不允许任何空段——
+		// label 直连与空前导分号都会让 ffmpeg 报 "No such filter"）
+		var parts []string
+		main := "[0:v]"
 		if len(vf) > 0 {
-			b.WriteString(strings.Join(vf, ","))
+			parts = append(parts, "[0:v]"+strings.Join(vf, ",")+"[v0]")
+			main = "[v0]"
 		}
-		b.WriteString("[v0];[1:v]")
 		if wm.Opacity > 0 && wm.Opacity < 1 {
-			b.WriteString(fmt.Sprintf("format=rgba,colorchannelmixer=aa=%.2f", wm.Opacity))
+			parts = append(parts, fmt.Sprintf("[1:v]format=rgba,colorchannelmixer=aa=%.2f[w]", wm.Opacity))
+			parts = append(parts, fmt.Sprintf("%s[w]overlay=%s[v]", main, wm.overlayExpr()))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s[1:v]overlay=%s[v]", main, wm.overlayExpr()))
 		}
-		b.WriteString(fmt.Sprintf("[w];[v0][w]overlay=%s[v]", wm.overlayExpr()))
-		args = append(args, "-filter_complex", b.String(), "-map", "[v]", "-map", "0:a:0?")
+		args = append(args, "-filter_complex", strings.Join(parts, ";"), "-map", "[v]", "-map", "0:a:0?")
 	} else {
 		args = append(args, "-i", input)
 		if len(vf) > 0 {
