@@ -192,7 +192,9 @@ func (f *FFmpeg) Mute(input, output string) error {
 }
 
 // ReplaceAudio 用指定音频替换视频的原音轨（不重编码视频）。
-// loopAudio 为 true 时音频短于视频则循环铺满。
+// loopAudio 为 true 时音频短于视频则循环铺满；false 时音频短于视频
+// 静音填充到视频结尾（成片时长以视频为准——曾用 -shortest 把成片截到
+// 配乐长度，配乐 8s + 视频 18s 产出 8s 成片）。
 func (f *FFmpeg) ReplaceAudio(video, audio string, loopAudio bool, output string, enc EncodeOptions) error {
 	args := []string{"-i", video}
 	if loopAudio {
@@ -200,18 +202,18 @@ func (f *FFmpeg) ReplaceAudio(video, audio string, loopAudio bool, output string
 		args = append(args, "-stream_loop", "-1")
 	}
 	args = append(args, "-i", audio)
-	args = append(args, "-filter_complex", "[1:a]anull[a]",
+	audioPad := ""
+	if !loopAudio {
+		audioPad = "apad" // 配乐播完后静音到视频结尾
+	}
+	args = append(args, "-filter_complex", "[1:a]"+orDefault(audioPad, "anull")+"[a]",
 		"-map", "0:v", "-map", "[a]",
 		"-c:v", "copy", "-c:a", orDefault(string(enc.AudioCodec), string(AudioAAC)),
 		"-ar", itoa(enc.audioRate()))
-	if loopAudio {
-		// 无限循环配乐必须显式截到视频时长：-shortest 对 filter 侧
-		// 无限流的停机行为随版本不同（8.x 不再触发），不能依赖
-		if info, err := f.Probe(video); err == nil && info.Duration > 0 {
-			args = append(args, "-t", fmt.Sprintf("%.3f", info.Duration))
-		}
-	} else {
-		args = append(args, "-shortest")
+	// 两种模式都必须显式截到视频时长：-shortest 对 filter 侧无限流
+	// （loop/apad）的停机行为随版本不同（8.x 不再触发），不能依赖
+	if info, err := f.Probe(video); err == nil && info.Duration > 0 {
+		args = append(args, "-t", fmt.Sprintf("%.3f", info.Duration))
 	}
 	args = append(args, "-y", output)
 	_, err := f.run(f.ffmpegBin(), args)

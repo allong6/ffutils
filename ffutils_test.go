@@ -473,6 +473,14 @@ func TestReplaceAudio(t *testing.T) {
 	}
 	assertFileExists(t, out)
 	assertDuration(t, ff, out, 10.37, 0.3)
+
+	// 非循环：配乐短于视频时静音填充到视频结尾（曾用 -shortest 把成片
+	// 截到配乐长度：10.4s 视频 × 8s 配乐 → 8s 成片）
+	out2 := filepath.Join(outDir(t), "replaced_noloop.mp4")
+	if err := ff.ReplaceAudio(clip(t, "2.mp4"), clip(t, "泉水.mp3"), false, out2, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertDuration(t, ff, out2, 10.37, 0.3)
 }
 
 func TestSpeed(t *testing.T) {
