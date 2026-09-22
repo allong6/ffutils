@@ -146,18 +146,48 @@ func (f *FFmpeg) Reverse(input, output string, enc EncodeOptions) error {
 	return f.ReverseRange(input, 0, 0, output, enc)
 }
 
+// PlayOptions 播放类处理（倒放/变速）的可选参数：时间区间（秒，
+// end<=0 到结尾）与输出画面尺寸/帧率（0=保持原始）——播放走独立
+// filter_complex 通道，TranscodeOptions 的 Width/Fps 不经过这里，
+// 由调用方折入 PlayOptions。
+type PlayOptions struct {
+	Start, End float64
+	Width      int
+	Fps        float64
+}
+
 // ReverseRange 带时间区间的倒放：先快速 seek 到 start 再处理到 end
 // （秒；end<=0 表示到结尾）——长视频倒放内存爆炸的主要缓解手段就是
 // 配合区间只倒放片段。无音轨输入（GIF/无声视频）自动只倒放画面。
 func (f *FFmpeg) ReverseRange(input string, start, end float64, output string, enc EncodeOptions) error {
-	filter, maps := playFilters(input, "reverse", "areverse", f)
-	args := seekArgs(start, end)
+	return f.ReverseOpts(input, PlayOptions{Start: start, End: end}, output, enc)
+}
+
+// ReverseOpts 倒放完整版：区间 + 宽度/帧率（作为视频链前置滤镜）。
+func (f *FFmpeg) ReverseOpts(input string, p PlayOptions, output string, enc EncodeOptions) error {
+	filter, maps := playFilters(input, playVfPrefix(p)+"reverse", "areverse", f)
+	args := seekArgs(p.Start, p.End)
 	args = append(args, "-i", input, "-filter_complex", filter)
 	args = append(args, maps...)
 	args = append(args, enc.outputArgs()...)
 	args = append(args, output)
 	_, err := f.run(f.ffmpegBin(), args)
 	return err
+}
+
+// playVfPrefix 尺寸/帧率前置滤镜（逗号结尾，空参数返回空串）。
+func playVfPrefix(p PlayOptions) string {
+	var parts []string
+	if p.Fps > 0 {
+		parts = append(parts, fmt.Sprintf("fps=%.3f", p.Fps))
+	}
+	if p.Width > 0 {
+		parts = append(parts, fmt.Sprintf("scale=%d:-2", p.Width))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ",") + ","
 }
 
 // playFilters 构造播放类滤镜（倒放/变速共用）：有音轨走视频+音频双路，

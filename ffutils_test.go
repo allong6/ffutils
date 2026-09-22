@@ -1542,3 +1542,24 @@ func TestPlayNoAudio(t *testing.T) {
 	}
 	assertDuration(t, ff, spd, 1.5, 0.3)
 }
+
+func TestPlayOptsDims(t *testing.T) {
+	// 播放 × 尺寸/帧率：Width/Fps 作为视频链前置滤镜（走独立通道的
+	// TranscodeOptions 尺寸参数此前被丢弃）
+	ff := testFF(t)
+	src := shortClip(t, ff)
+	out := filepath.Join(outDir(t), "play_dims.mp4")
+	if err := ff.ReverseOpts(src, PlayOptions{Start: 0, End: 2, Width: 640, Fps: 15}, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 640 || info.Video.Height != 360 {
+		t.Fatalf("倒放+缩放应 640x360，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+	if info.Duration > 2.4 || info.Duration < 1.6 {
+		t.Fatalf("倒放 [0,2) 应约 2s，实际 %.2f", info.Duration)
+	}
+}

@@ -230,13 +230,18 @@ func (f *FFmpeg) Speed(input string, speed float64, output string, enc EncodeOpt
 // end<=0 表示到结尾），与全量 Speed 语义一致。无音轨输入（GIF/无声
 // 视频）自动只变速画面。
 func (f *FFmpeg) SpeedRange(input string, start, end, speed float64, output string, enc EncodeOptions) error {
+	return f.SpeedOpts(input, speed, PlayOptions{Start: start, End: end}, output, enc)
+}
+
+// SpeedOpts 变速完整版：区间 + 宽度/帧率（作为视频链前置滤镜）。
+func (f *FFmpeg) SpeedOpts(input string, speed float64, p PlayOptions, output string, enc EncodeOptions) error {
 	if speed <= 0 || speed == 1 {
 		return fmt.Errorf("倍率必须为正且不等于 1: %v", speed)
 	}
 	filter, maps := playFilters(input,
-		fmt.Sprintf("setpts=%.6f*PTS", 1/speed),
+		playVfPrefix(p)+fmt.Sprintf("setpts=%.6f*PTS", 1/speed),
 		fmt.Sprintf("atempo=%.6f", speed), f)
-	args := seekArgs(start, end)
+	args := seekArgs(p.Start, p.End)
 	args = append(args, "-i", input, "-filter_complex", filter)
 	args = append(args, maps...)
 	if enc.VideoCodec == "copy" {
