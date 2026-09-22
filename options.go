@@ -36,6 +36,12 @@ func (o EncodeOptions) audioRate() int {
 	if o.AudioRate > 0 {
 		return o.AudioRate
 	}
+	// libopus 只接受 48000/24000/16000/12000/8000 Hz，默认 44100 会
+	// "Error while opening encoder"（播放通道倒放 webm 时暴露——Transcode
+	// 通道不追加 -ar 所以从未触发）
+	if o.AudioCodec == AudioOpus {
+		return 48000
+	}
 	return 44100
 }
 func orDefault(v, def string) string {
