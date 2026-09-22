@@ -103,15 +103,22 @@ go test ./...                    # 集成测试
    - `base` 分支上出现任何 `gui/` 路径 = 错误（base 的 .gitignore 已忽略 `gui/`）；
    - `gui` 分支上出现 `gui/build/`、`gui/frontend/wailsjs/` = 错误。
    曾发生：gui 构建产物被 `git add -A` 带进 base 提交，需要二次提交清理。
-2. **禁止携带未提交修改切换分支**（`stash` 后到另一分支 `stash pop`、
-   或直接 checkout 带走工作区改动）。正确流程：先确定目标分支并确认
-   工作区干净，再在目标分支上从零修改。多次事故均源于跨分支携带代码。
-   曾发生：gui 的 cli.go 改动 stash 后在 base 上 pop，冲突落进 base
-   工作区（2026-09-21，即时恢复）——需跨分支时先提交或明确隔离。
-   **`reset --hard` 同理且更危险**：它清空全部未提交工作区改动——
-   2026-09-23 曾为迁移一个误提交执行 reset --hard，把半小时的 gui 层
-   未提交实现全部抹掉。迁移误提交用 cherry-pick + reset 前必须
-   `git stash` 保护现场，或确认 `git status` 除目标提交外完全干净。
+2. **分支操作规程（三条强制路径，违反任一=事故）**：
+   - **改库文件前**：先 `git branch --show-current` 确认在 base（gui 上
+     直接改库文件并提交已发生三次，每次都要 cherry-pick 迁移）。同理，
+     界面代码只在 gui 改。
+   - **切换分支前**：`git status --short` 有任何输出 → 三选一：
+     ① 提交（宁可 WIP 提交，`git commit -m "WIP: ..."`，到达后再整理）；
+     ② `git stash push -m "wip-<分支>-<内容>"`（**到达目标分支后不要
+       pop**——stash 里的改动属于原分支，回原分支再 pop）；③ 放弃切换，
+       先完成/提交当前工作。禁止带改动 checkout。
+   - **`reset --hard` / `checkout --force` / `clean -fd` 前**：同上三选一
+     保护现场——它们清空全部未提交改动。2026-09-23 事故：为迁移一个
+     误提交直接 reset --hard，半小时未提交实现全丢（同日第二次迁移按
+     规程 stash 保护，零丢失——正反两例都在这天）。
+   - 迁移误提交（提交落错分支）的标准解法：目标分支 `cherry-pick <hash>`
+     后，回原分支 `git reset --hard HEAD~1` **之前** 先确认工作区干净
+     （`git status --short` 无输出）。
 3. **库层行为问题回 base 修**：包括但不限于子进程行为（控制台黑窗、
    退出码、超时杀进程）。曾发生：在 gui 分支写了库文件再挪回 base。
 4. **合并时 `AGENTS.md` / `.gitignore` 冲突的既定解法**：
