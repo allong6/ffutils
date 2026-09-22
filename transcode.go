@@ -227,15 +227,18 @@ func (f *FFmpeg) Speed(input string, speed float64, output string, enc EncodeOpt
 }
 
 // SpeedRange 带时间区间的变速：先快速 seek 到 start 再处理到 end（秒；
-// end<=0 表示到结尾），与全量 Speed 语义一致。变速要求输入含视频与
-// 音频轨（滤镜写死了两路映射）。
+// end<=0 表示到结尾），与全量 Speed 语义一致。无音轨输入（GIF/无声
+// 视频）自动只变速画面。
 func (f *FFmpeg) SpeedRange(input string, start, end, speed float64, output string, enc EncodeOptions) error {
 	if speed <= 0 || speed == 1 {
 		return fmt.Errorf("倍率必须为正且不等于 1: %v", speed)
 	}
-	filter := fmt.Sprintf("[0:v]setpts=%.6f*PTS[v];[0:a]atempo=%.6f[a]", 1/speed, speed)
+	filter, maps := playFilters(input,
+		fmt.Sprintf("setpts=%.6f*PTS", 1/speed),
+		fmt.Sprintf("atempo=%.6f", speed), f)
 	args := seekArgs(start, end)
-	args = append(args, "-i", input, "-filter_complex", filter, "-map", "[v]", "-map", "[a]")
+	args = append(args, "-i", input, "-filter_complex", filter)
+	args = append(args, maps...)
 	if enc.VideoCodec == "copy" {
 		// 变速必须重编码
 		enc.VideoCodec = ""

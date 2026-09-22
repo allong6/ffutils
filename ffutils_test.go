@@ -1522,3 +1522,23 @@ func fileSize(p string) (int64, error) {
 	}
 	return st.Size(), nil
 }
+
+func TestPlayNoAudio(t *testing.T) {
+	// 无音轨输入（GIF/无声视频）的倒放与变速：滤镜不能写死 [0:a]
+	//（曾 "Error binding filtergraph" 失败）
+	ff := testFF(t)
+	src := filepath.Join(outDir(t), "silent.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-f", "lavfi", "-i", "testsrc=duration=3:size=320x240:rate=10", "-an", "-y", src}); err != nil {
+		t.Fatal(err)
+	}
+	rev := filepath.Join(outDir(t), "silent_rev.mp4")
+	if err := ff.ReverseRange(src, 0, 2, rev, EncodeOptions{}); err != nil {
+		t.Fatalf("无声倒放: %v", err)
+	}
+	assertDuration(t, ff, rev, 2.0, 0.3)
+	spd := filepath.Join(outDir(t), "silent_spd.mp4")
+	if err := ff.SpeedRange(src, 0, 0, 2.0, spd, EncodeOptions{}); err != nil {
+		t.Fatalf("无声变速: %v", err)
+	}
+	assertDuration(t, ff, spd, 1.5, 0.3)
+}

@@ -148,15 +148,31 @@ func (f *FFmpeg) Reverse(input, output string, enc EncodeOptions) error {
 
 // ReverseRange 带时间区间的倒放：先快速 seek 到 start 再处理到 end
 // （秒；end<=0 表示到结尾）——长视频倒放内存爆炸的主要缓解手段就是
-// 配合区间只倒放片段。要求输入含视频与音频轨（滤镜写死两路映射）。
+// 配合区间只倒放片段。无音轨输入（GIF/无声视频）自动只倒放画面。
 func (f *FFmpeg) ReverseRange(input string, start, end float64, output string, enc EncodeOptions) error {
-	filter := "[0:v]reverse[v];[0:a]areverse[a]"
+	filter, maps := playFilters(input, "reverse", "areverse", f)
 	args := seekArgs(start, end)
-	args = append(args, "-i", input, "-filter_complex", filter, "-map", "[v]", "-map", "[a]")
+	args = append(args, "-i", input, "-filter_complex", filter)
+	args = append(args, maps...)
 	args = append(args, enc.outputArgs()...)
 	args = append(args, output)
 	_, err := f.run(f.ffmpegBin(), args)
 	return err
+}
+
+// playFilters 构造播放类滤镜（倒放/变速共用）：有音轨走视频+音频双路，
+// 无音轨（GIF/无声视频）只处理视频路——滤镜写死 [0:a] 会导致
+// "Error binding filtergraph" 失败。
+func playFilters(input, videoExpr, audioExpr string, f *FFmpeg) (string, []string) {
+	hasAudio := false
+	if info, err := f.Probe(input); err == nil {
+		hasAudio = info.HasAudio
+	}
+	if hasAudio {
+		return fmt.Sprintf("[0:v]%s[v];[0:a]%s[a]", videoExpr, audioExpr),
+			[]string{"-map", "[v]", "-map", "[a]"}
+	}
+	return fmt.Sprintf("[0:v]%s[v]", videoExpr), []string{"-map", "[v]"}
 }
 
 // SetVolume 调整整条音轨音量（视频拷贝不重编码）。
