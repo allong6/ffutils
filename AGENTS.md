@@ -6,19 +6,20 @@
 
 ## 文档索引（新会话必读）
 
-| 文档 | 内容 | 位置 |
-|---|---|---|
-| **本文档** | 开发规则/分支职责/红线/测试流程 | `AGENTS.md`（全分支统一） |
-| [docs/STATUS.md](docs/STATUS.md) | **项目状态快照：分支进度/最近完成/待办/环境 + 新会话上手 SOP**（新会话先读） | `docs/`（gui 起维护，随分支同步） |
-| [README.md](README.md) | 项目全景：分支结构/API 总览/快速开始/文档索引 | `README.md`（base 定义） |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 技术架构：分层设计/文件结构/关键决策/安全体系 | `docs/`（base 定义） |
-| [gui/README.md](gui/README.md) | GUI 构建/CLI/预设/硬件/打包 | `gui/`（gui 分支） |
-| [docs/DESIGN.md](docs/DESIGN.md) | GUI 设计文档：双模式/里程碑 | `docs/`（gui 分支） |
-| [docs/FEATURES.md](docs/FEATURES.md) | 功能清单：各页签能力/组合语义/输出规则 | `docs/`（gui 分支） |
-| [docs/UI-GUIDE.md](docs/UI-GUIDE.md) | 开发样式说明：布局/标题体系/组件规范 | `docs/`（gui 分支） |
-| [docs/AI.md](docs/AI.md) | AI 一句话处理：需求契约/提示词/执行映射 | `docs/`（gui 分支） |
-| [docs/TESTING.md](docs/TESTING.md) | 测试标准流程 L1-L4 | `docs/`（gui 分支） |
-| [license-server/README.md](license-server/README.md) | 激活平台部署/接口/安全 | `license-server/`（license 分支） |
+| 文档 | 内容 | 何时必读/必更 | 位置 |
+|---|---|---|---|
+| **本文档** | 开发规则/分支职责/红线/测试流程/界面执行规范 | 每次开工前 | `AGENTS.md`（全分支统一） |
+| [docs/STATUS.md](docs/STATUS.md) | 项目状态快照：分支进度/最近完成/待办/环境 + 新会话上手 SOP | **新会话先读**；里程碑/环境变化后必更 | `docs/`（gui 起维护，随分支同步） |
+| [docs/UI-GUIDE.md](docs/UI-GUIDE.md) | 样式与交互规范：**模式切换参数语义 R1-R5（§2.1）**/布局/标题体系/组件规范 | **任何界面新增/改造需求动手前必读 §2.1**；控件/布局改动后必更 | `docs/`（gui 分支） |
+| [docs/FEATURES.md](docs/FEATURES.md) | 功能清单：各页签能力/组合语义/输出规则 | 新增/改造功能的语义基准；功能增删后必更 | `docs/`（gui 分支） |
+| [docs/TESTING.md](docs/TESTING.md) | 测试标准流程 L1-L4/全量矩阵/模拟器纪律 | 改动验收前查对应层；测试设施变化后必更 | `docs/`（gui 分支） |
+| [README.md](README.md) | 项目全景：分支结构/API 总览/快速开始 | base 库 API 变更后必更 | `README.md`（base 定义） |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 技术架构：分层设计/文件结构/关键决策 | base 分层/文件结构变化后必更 | `docs/`（base 定义） |
+| [gui/README.md](gui/README.md) | GUI 构建/**CLI 子命令参考**/预设/硬件/打包 | CLI 子命令/参数变化后必更 | `gui/`（gui 分支） |
+| [docs/DESIGN.md](docs/DESIGN.md) | GUI 设计文档：双模式/里程碑 | 设计层决策变化后 | `docs/`（gui 分支） |
+| [docs/AI.md](docs/AI.md) | AI 一句话处理：需求契约/提示词/执行映射 | AI 功能改动前 | `docs/`（gui 分支） |
+| docs/PROPOSAL-*.md | 归档提案：已评估未实施的需求方案 | 对应需求启动时取用；新提案归档时建 | `docs/`（gui 分支） |
+| [license-server/README.md](license-server/README.md) | 激活平台部署/接口/安全 | license 开工前 | `license-server/`（license 分支） |
 
 ## 构建与测试
 
@@ -145,6 +146,27 @@ go test ./...                    # 集成测试
 - 产物：自动测试 `test/output/<用例名>/`；矩阵与全量报告
   `test/output/<页>-full/`；MCP 截图 `test/output/screenshots/`；
   机器不可判项进 test/output/REVIEW.md 或报告内人工清单（仅保留未确认项）。
+
+## 界面需求的执行规范（新增/改造必须逐条对号，细则见 docs/UI-GUIDE.md §2.1）
+
+任何界面需求（新增功能、改参数、调交互）动手前先过这张清单；规则语义与
+事故案例的完整版在 [docs/UI-GUIDE.md](docs/UI-GUIDE.md) §2.1，功能基准
+语义在 [docs/FEATURES.md](docs/FEATURES.md)：
+
+1. **先分类参数**：选择型（总有值）/ 勾选型=功能开关（不勾=不做）/
+   勾选型=资源多选（如保留哪些段声音）。**"无勾选=专业默认"仅适用于
+   资源多选**，不要当通则。
+2. **R1 所见即所发**：简易模式提交只带简易表单可见的参数——新增专业
+   具体参数时，必须同步确认它在简易提交中不生效（发送层按 mode 屏蔽，
+   参照 addFx 的 cropNumeric 分支；曾因透传残留数值暗中覆盖简易选择）。
+3. **R2/R3 互转**：新增选择型参数必须同时定义简易↔专业的换算
+   （规则进 service/modes.go 单一事实来源）与片段类共享语义的携带；
+   漏携带=用户填了参数在另一模式静默丢失（EnqueueSimple 事故）。
+4. **R4 勾选型跨模式**：专业专属勾选切简易静默取消+proOnlyMem 记忆。
+5. **R5 默认值统一**：简易不暴露的维度=专业默认（如分屏声音默认第一路）；
+   改专业默认时同步检查简易路径是否跟随。
+6. **验证对号**：涉及以上语义的改动，交付前用 bridge/模拟器实证一次
+   "简易提交的完整参数体"（fetch 层捕获比对），不等用户发现。
 
 ## 界面改动的提交与交付纪律（2026-09-19 起，用户明确要求）
 
