@@ -28,7 +28,8 @@ go test ./...                    # 集成测试
 ```
 
 - 测试依赖本地资源：`bin/` 下放 `ffmpeg.exe`/`ffprobe.exe`，`test/` 下放测试素材
-  （1.mp4/2.mp4/3.mp4、若干 mp3）。缺失时测试自动 skip，不会失败。
+  （以目录现有为准——1/2/3.mp4 等常驻，其余按需增删）。缺失时测试自动
+  skip，不会失败。
 - 新增公开方法必须配 1-3 个测试用例（ffutils_test.go），自动断言能断言的一切：
   输出文件存在且非空、时长与理论值误差、分辨率、编码器、流类型。
   用 `assertDuration` / `assertFileExists` / `outDir` / `testFF` 辅助函数。
@@ -104,6 +105,8 @@ go test ./...                    # 集成测试
 2. **禁止携带未提交修改切换分支**（`stash` 后到另一分支 `stash pop`、
    或直接 checkout 带走工作区改动）。正确流程：先确定目标分支并确认
    工作区干净，再在目标分支上从零修改。多次事故均源于跨分支携带代码。
+   曾发生：gui 的 cli.go 改动 stash 后在 base 上 pop，冲突落进 base
+   工作区（2026-09-21，即时恢复）——需跨分支时先提交或明确隔离。
 3. **库层行为问题回 base 修**：包括但不限于子进程行为（控制台黑窗、
    退出码、超时杀进程）。曾发生：在 gui 分支写了库文件再挪回 base。
 4. **合并时 `AGENTS.md` / `.gitignore` 冲突的既定解法**：
@@ -123,22 +126,25 @@ go test ./...                    # 集成测试
 ## 测试规范（详见 gui 分支 docs/TESTING.md——分层定义/命令/产物）
 
 **日常改动只做针对性测试**（改哪个模块跑哪层，见下表）；**全量验证
-（清场重跑 + 完整报告）仅在用户明确要求"完整测试"时执行**。
+（清场重跑 + 完整报告）仅在用户明确要求"完整测试"时执行**——标准执行器
+是三个矩阵脚本（见 L3），报告落 `test/output/<页>-full/REPORT.md`，
+含机器断言明细与人工核对清单。
 
 测试分四层，**执行时机与范围**（谁在什么场景必须跑什么）：
 
 | 层 | 验证什么 | 怎么验证 | 执行时机 |
 |---|---|---|---|
-| L1 代码层 | base 库/service/绑定的 Go 行为 | `go test` 类测试（base 每个公开 API 至少 1 个真实执行用例，断言文件/时长/分辨率/编码器；归因类问题先跑基准命令拿双版本数据） | 每次代码改动，提交前 |
-| L2 前端静态+模拟 | html/js/css 完整性与 AI 页交互逻辑 | `frontend-check.mjs`（ID/方法交叉、标签平衡 div/section/aside）+ `ai-front-sim.mjs`（无头驱动真实事件处理器的场景模拟） | 每次 `gui/frontend/dist/` 改动，提交前 |
+| L1 代码层 | base 库/service/绑定的 Go 行为 | `go test` 类测试（base 每个公开 API 至少 1 个真实执行用例，断言文件/时长/分辨率/编码器；归因类问题先跑基准命令拿双版本数据）；**App 层绑定（app_test.go）必须走真 Enqueue* 方法并断言输出时长——曾因只断言"成功"漏掉字段搬运断链** | 每次代码改动，提交前 |
+| L2 前端静态+模拟 | html/js/css 完整性与交互逻辑 | `frontend-check.mjs`（ID/方法交叉、标签平衡）+ `convert-front-sim.mjs`（转换页字段收集/事件链/模式互转模拟）+ `ai-front-sim.mjs`（AI 页场景模拟）。**模拟器的 stub 必须镜像真实后端行为**（如联动返回值），并优先用真实点击路径（点按钮冒泡），预置状态会掩盖事件顺序类 bug | 每次 `gui/frontend/dist/` 改动，提交前 |
+| L3 CLI 矩阵 | 与 GUI 同执行链的功能全量（所有选项×组合×素材，多维度断言：尺寸/帧率/码率/编码/音轨/体积/时长） | `convert-matrix.mjs` / `video-matrix.mjs` / `pages-matrix.mjs`（构建 exe 的 CLI 通道）+ `go test -run TestCLI ./` | 新功能交付前跑对应页矩阵；"完整测试"时三脚本全量 |
 | L4a 布局验证 | 真实渲染下的布局样式 | **构建 exe + MCP 截图核对**（左右双栏/页签对位/模式显隐）；MCP 不可用时构建启动留用户验证并注明"未视觉核对" | 涉及 html/css/布局/显隐逻辑的改动，提交前 |
-| L4b 功能交互 | 真实渲染下的功能流转 | **构建 exe + MCP 驱动**核心路径并截图存档；MCP 不可用时用 ai-front-sim 类模拟兜底；AI 对话另跑 live 测试（AI_TEST_KEY） | 新功能/交互改动，交付前 |
+| L4b 功能交互 | 真实渲染下的功能流转 | **构建 exe + MCP 驱动**核心路径并截图存档；MCP 不可用时用 testbridge（真实浏览器 DOM + CLI 后端）或模拟器兜底；AI 对话另跑 live 测试（AI_TEST_KEY） | 新功能/交互改动，交付前 |
 
 - L1-L3 一键：`powershell -File gui\scripts\test-all.ps1`；L4c 全场景
   （发布前/大改后）见 gui/testbridge/README.md。
-- 产物：自动测试 `test/output/<用例名>/`；MCP 截图
-  `test/output/screenshots/<功能名>_<日期>.png`；机器不可判项进
-  test/output/REVIEW.md 人工清单（仅保留未确认项）。
+- 产物：自动测试 `test/output/<用例名>/`；矩阵与全量报告
+  `test/output/<页>-full/`；MCP 截图 `test/output/screenshots/`；
+  机器不可判项进 test/output/REVIEW.md 或报告内人工清单（仅保留未确认项）。
 
 ## 界面改动的提交与交付纪律（2026-09-19 起，用户明确要求）
 
