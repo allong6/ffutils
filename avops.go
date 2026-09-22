@@ -143,8 +143,16 @@ func (f *FFmpeg) FadeAV(input string, opts FadeOptions, output string, enc Encod
 // Reverse 倒放（画面与音频同时反向）。注意：reverse 滤镜需要把整段
 // 内容载入内存，长片段（>几分钟）可能耗尽内存，建议配合 Trim 先截短。
 func (f *FFmpeg) Reverse(input, output string, enc EncodeOptions) error {
+	return f.ReverseRange(input, 0, 0, output, enc)
+}
+
+// ReverseRange 带时间区间的倒放：先快速 seek 到 start 再处理到 end
+// （秒；end<=0 表示到结尾）——长视频倒放内存爆炸的主要缓解手段就是
+// 配合区间只倒放片段。要求输入含视频与音频轨（滤镜写死两路映射）。
+func (f *FFmpeg) ReverseRange(input string, start, end float64, output string, enc EncodeOptions) error {
 	filter := "[0:v]reverse[v];[0:a]areverse[a]"
-	args := []string{"-i", input, "-filter_complex", filter, "-map", "[v]", "-map", "[a]"}
+	args := seekArgs(start, end)
+	args = append(args, "-i", input, "-filter_complex", filter, "-map", "[v]", "-map", "[a]")
 	args = append(args, enc.outputArgs()...)
 	args = append(args, output)
 	_, err := f.run(f.ffmpegBin(), args)

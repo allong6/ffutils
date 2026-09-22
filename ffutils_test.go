@@ -613,6 +613,31 @@ func TestReverse(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertDuration(t, ff, out, 3.0, 0.3)
+
+	// 区间倒放：只倒 [1,3) 共 2 秒（长视频倒放内存问题的主要缓解手段）
+	out2 := filepath.Join(outDir(t), "reversed_range.mp4")
+	if err := ff.ReverseRange(src, 1, 3, out2, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertDuration(t, ff, out2, 2.0, 0.3)
+	info, err := ff.Probe(out2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasAudio {
+		t.Fatal("区间倒放应保留音轨")
+	}
+}
+
+func TestSpeedRange(t *testing.T) {
+	ff := testFF(t)
+	src := shortClip(t, ff) // 3s
+	// [1,3) 两秒片段 2 倍速 → 1 秒
+	out := filepath.Join(outDir(t), "speed_range.mp4")
+	if err := ff.SpeedRange(src, 1, 3, 2.0, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertDuration(t, ff, out, 1.0, 0.25)
 }
 
 func TestSetVolume(t *testing.T) {

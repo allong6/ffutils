@@ -223,11 +223,19 @@ func (f *FFmpeg) ReplaceAudio(video, audio string, loopAudio bool, output string
 // Speed 调整整条音视频的播放速度（0.5~2.0 之外的倍率可能需要多级 filter，不建议）。
 // 视频用 setpts、音频用 atempo，音画同步保持。
 func (f *FFmpeg) Speed(input string, speed float64, output string, enc EncodeOptions) error {
+	return f.SpeedRange(input, 0, 0, speed, output, enc)
+}
+
+// SpeedRange 带时间区间的变速：先快速 seek 到 start 再处理到 end（秒；
+// end<=0 表示到结尾），与全量 Speed 语义一致。变速要求输入含视频与
+// 音频轨（滤镜写死了两路映射）。
+func (f *FFmpeg) SpeedRange(input string, start, end, speed float64, output string, enc EncodeOptions) error {
 	if speed <= 0 || speed == 1 {
 		return fmt.Errorf("倍率必须为正且不等于 1: %v", speed)
 	}
 	filter := fmt.Sprintf("[0:v]setpts=%.6f*PTS[v];[0:a]atempo=%.6f[a]", 1/speed, speed)
-	args := []string{"-i", input, "-filter_complex", filter, "-map", "[v]", "-map", "[a]"}
+	args := seekArgs(start, end)
+	args = append(args, "-i", input, "-filter_complex", filter, "-map", "[v]", "-map", "[a]")
 	if enc.VideoCodec == "copy" {
 		// 变速必须重编码
 		enc.VideoCodec = ""
@@ -236,6 +244,19 @@ func (f *FFmpeg) Speed(input string, speed float64, output string, enc EncodeOpt
 	args = append(args, output)
 	_, err := f.run(f.ffmpegBin(), args)
 	return err
+}
+
+// seekArgs 生成放在 -i 之前的快速 seek 参数（转码场景：关键帧定位后
+// 精确解码）；start<=0 不加 -ss，end<=start 不加 -t。
+func seekArgs(start, end float64) []string {
+	var seek []string
+	if start > 0 {
+		seek = append(seek, "-ss", fmt.Sprintf("%.3f", start))
+	}
+	if end > start && end > 0 {
+		seek = append(seek, "-t", fmt.Sprintf("%.3f", end-start))
+	}
+	return seek
 }
 
 // GIFOptions GIF 输出参数，零值字段使用默认（与旧 ToGIF 行为一致取向）。
