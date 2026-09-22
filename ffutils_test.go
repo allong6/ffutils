@@ -727,6 +727,11 @@ func TestComposeGrid_2x1(t *testing.T) {
 	if info.Duration < 2.5 || info.Duration > 3.5 {
 		t.Fatalf("分屏时长应约 3s，实际 %.2f", info.Duration)
 	}
+	// 未指定保留路时默认保留第一个有音轨的输入（GUI 简易模式/CLI 路径；
+	// 曾空列表直接无声，与提示文案"保留第 1 段声音"矛盾）
+	if !info.HasAudio {
+		t.Fatal("分屏默认应保留第 1 路声音，实际无声")
+	}
 }
 
 func TestComposeGrid_PadBlack(t *testing.T) {

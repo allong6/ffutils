@@ -135,6 +135,10 @@ func (f *FFmpeg) ComposeGridOpts(clips []string, o GridOptions, output string, e
 	// 音轨选择链：各路统一采样格式后按 Volume 增益，amix 混成单轨。
 	// aresample/aformat 先归一（amix 要求各输入采样率/声道一致）。
 	// 旧版 amix（<4.4 无 normalize）默认每路乘 1/N：各路预乘 N 抵消。
+	// audio 为空（nil 或显式空切片）= 不保留声音——ComposeGridAudio 的
+	// API 契约（NoAudioKept 固化）；调用方需要"默认保留第一路"语义时
+	// 自行传入（gui 的 execTask 对未指定 AudioSel 的分屏任务传第一个
+	// 有音轨的输入）。
 	var amixInputs strings.Builder
 	keptTotal := 0
 	for _, a := range audio {
