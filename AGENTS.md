@@ -19,7 +19,7 @@
 | [docs/DESIGN.md](docs/DESIGN.md) | GUI 设计文档：双模式/里程碑 | 设计层决策变化后 | `docs/`（gui 分支） |
 | [docs/AI.md](docs/AI.md) | AI 一句话处理：需求契约/提示词/执行映射 | AI 功能改动前 | `docs/`（gui 分支） |
 | docs/PROPOSAL-*.md | 归档提案：已评估未实施的需求方案 | 对应需求启动时取用；新提案归档时建 | `docs/`（gui 分支） |
-| ~~[license-server/README.md](license-server/README.md)~~ | 激活平台部署/接口/安全 | 二期在 gui 建 license-server/ 独立模块时重建 | `license-server/`（尚未开工） |
+| [license-server/README.md](license-server/README.md) | 激活平台部署/接口/安全 | 签发台开发/部署时 | `license-server/`（gui 分支，独立 module） |
 
 ## 构建与测试
 
