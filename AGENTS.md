@@ -19,7 +19,7 @@
 | [docs/DESIGN.md](docs/DESIGN.md) | GUI 设计文档：双模式/里程碑 | 设计层决策变化后 | `docs/`（gui 分支） |
 | [docs/AI.md](docs/AI.md) | AI 一句话处理：需求契约/提示词/执行映射 | AI 功能改动前 | `docs/`（gui 分支） |
 | docs/PROPOSAL-*.md | 归档提案：已评估未实施的需求方案 | 对应需求启动时取用；新提案归档时建 | `docs/`（gui 分支） |
-| [license-server/README.md](license-server/README.md) | 激活平台部署/接口/安全 | license 开工前 | `license-server/`（license 分支） |
+| ~~[license-server/README.md](license-server/README.md)~~ | 激活平台部署/接口/安全 | 二期在 gui 建 license-server/ 独立模块时重建 | `license-server/`（尚未开工） |
 
 ## 构建与测试
 
@@ -76,7 +76,7 @@ go test ./...                    # 集成测试
 | `base` | ffmpeg 功能基础定义分支：只包含 ffutils 库本身与测试，不引入任何 UI/TUI/交互层代码 |
 | `gui` | GUI 工具分支：基于 ffutils 的桌面应用（FFBox），**开始任何工作前先 `git merge base`** |
 | ~~`ai`~~ | 已并回 gui（2026-09-20）：AI 一句话处理作为 gui 的一个功能项开发完成，独立分支撤销；后续 AI 功能直接在 gui 提交，ffmpeg 能力缺口仍回 base 补 |
-| `license` | 激活分支：基于 gui（激活门 + license-server 平台），开工前先 `git merge gui`；GUI 只内嵌公钥验签（私钥绝不进 GUI），平台代码在 license-server/ 独立模块可整体迁移 |
+| ~~`license`~~ | 已废弃（2026-09-23）：激活门/设置中心/试用已在 gui 分支落地（gui/service/entitlement.go 单一判定源，GUI 只内嵌公钥验签，私钥绝不进 GUI/仓库）；license-server 自助签发平台二期在 gui 内建独立模块（共享 licensetoken 微包），license 分支不再维护 |
 
 ### 提交流向与基准
 
