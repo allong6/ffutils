@@ -11,6 +11,7 @@
 | **本文档** | 开发规则/分支职责/红线/测试流程/界面执行规范 | 每次开工前 | `AGENTS.md`（全分支统一） |
 | [docs/STATUS.md](docs/STATUS.md) | 项目状态快照：分支进度/最近完成/待办/环境 + 新会话上手 SOP | **新会话先读**；里程碑/环境变化后必更 | `docs/`（gui 起维护，随分支同步） |
 | [docs/UI-GUIDE.md](docs/UI-GUIDE.md) | 样式与交互规范：**模式切换参数语义 R1-R5（§2.1）**/布局/标题体系/组件规范 | **任何界面新增/改造需求动手前必读 §2.1**；控件/布局改动后必更 | `docs/`（gui 分支） |
+| [docs/LICENSE.md](docs/LICENSE.md) | 授权模型单一事实源：状态机/判定链/令牌/处置/防护边界 | 激活体系任何改动前必读、改动后必更 | docs/（gui 分支） |
 | [docs/FEATURES.md](docs/FEATURES.md) | 功能清单：各页签能力/组合语义/输出规则 | 新增/改造功能的语义基准；功能增删后必更 | `docs/`（gui 分支） |
 | [docs/TESTING.md](docs/TESTING.md) | 测试标准流程 L1-L4/全量矩阵/模拟器纪律 | 改动验收前查对应层；测试设施变化后必更 | `docs/`（gui 分支） |
 | [README.md](README.md) | 项目全景：分支结构/API 总览/快速开始 | base 库 API 变更后必更 | `README.md`（base 定义） |
