@@ -1915,6 +1915,69 @@ func TestPiPMainOutlivesPip(t *testing.T) {
 	}
 }
 
+func TestPiPMixAudio(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	// 主画面 3s 有声 + 小窗 1s 有声：混合后保留音轨，时长仍以主画面为准
+	main := filepath.Join(dir, "mixmain3s.mp4")
+	pip := filepath.Join(dir, "mixpip1s.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "3", "-y", main}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "3.mp4"), "-t", "1", "-y", pip}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "pip_mix.mp4")
+	if err := ff.PictureInPicture(main, pip, PiPOptions{
+		Scale: 0.25, UsePipAudio: true, PipVolume: 0.5,
+	}, out, EncodeOptions{}); err != nil {
+		t.Fatalf("混合小窗声音应成功: %v", err)
+	}
+	assertDuration(t, ff, out, 3.0, 0.3)
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasAudio {
+		t.Fatal("混合小窗声音后输出应有音轨")
+	}
+}
+
+func TestPiPPipAudioWithoutMainAudio(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	// 主画面无音轨：小窗声音单独成为音轨，并铺到主画面时长（1s 补到 3s）
+	main := filepath.Join(dir, "silent3s.mp4")
+	pip := filepath.Join(dir, "solo1s.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "3", "-an", "-y", main}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "3.mp4"), "-t", "1", "-y", pip}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HasAudio {
+		t.Skip("素材处理异常：主画面应无音轨")
+	}
+	out := filepath.Join(dir, "pip_solo.mp4")
+	if err := ff.PictureInPicture(main, pip, PiPOptions{
+		Scale: 0.25, UsePipAudio: true,
+	}, out, EncodeOptions{}); err != nil {
+		t.Fatalf("主画面无音轨时小窗声音应单独成轨: %v", err)
+	}
+	assertDuration(t, ff, out, 3.0, 0.3)
+	info, err = ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasAudio {
+		t.Fatal("主画面无音轨时输出应保留小窗音轨")
+	}
+}
+
 func TestGridShortest(t *testing.T) {
 	ff := testFF(t)
 	dir := outDir(t)
