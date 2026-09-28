@@ -1102,11 +1102,11 @@ func TestExtractFrames_EveryN(t *testing.T) {
 // TestExtractFrames_BracketDir 回归：输出目录名含方括号时帧数必须正确。
 //
 // 历史缺陷：countPattern 用 filepath.Glob 数帧，而 `[` `]` 在 glob 里是
-// 字符类语法，目录名 output/[shot]2_xxx_seq/ 会让 pattern 一条都匹配不到，
+// 字符类语法，目录名 output/[截图]2_xxx_seq/ 会让 pattern 一条都匹配不到，
 // 于是"帧已写出但返回 0"。GUI 的默认帧序列目录正是这个形状，必须锁死。
 func TestExtractFrames_BracketDir(t *testing.T) {
 	ff := testFF(t)
-	dir := filepath.Join(outDir(t), "[shot]2_abc12345_seq")
+	dir := filepath.Join(outDir(t), "[截图]2_abc12345_seq")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

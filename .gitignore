@@ -23,3 +23,15 @@ Thumbs.db
 
 # gui 分支产物（该目录内容在 gui 分支管理）
 gui/
+
+# ffmpeg 裁剪构建工作目录（源码/中间产物，体积大不入库）
+tools/build-ffmpeg/work/
+
+# 内嵌构建资产（package.ps1 从裁剪构建拷入，不入库）
+gui/embedtools/assets/
+
+# 签发台运行时数据（台账 issued.json；含旧平台遗留的 keys.json=私钥）
+license-server/data/
+
+# 助手工作目录（会话记忆/临时产物，不入库）
+.workbuddy-ai/

@@ -152,7 +152,7 @@ func (f *FFmpeg) ExtractFramesEveryN(input string, start, end float64, everyN in
 // countPattern 统计模板实际落盘的文件数（%04d -> *）。
 //
 // **不能用 filepath.Glob**：`[` `]` 在 glob 里是字符类语法，输出目录一旦
-// 含方括号（GUI 的默认帧序列目录形如 output/[shot]原名_uuid_seq/）就一条
+// 含方括号（GUI 的默认帧序列目录形如 output/[截图]原名_uuid_seq/）就一条
 // 也匹配不到，帧数恒报 0——而帧其实已经写出。改用 os.ReadDir + 前缀/后缀
 // 匹配，只做字面量比较，不受 glob 元字符影响。
 func countPattern(pattern string) int {
