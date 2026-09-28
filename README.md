@@ -84,7 +84,7 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 | `Concat(paths, output, enc)` | 拼接（同参数流拷贝或重编码） |
 | `XfadeConcat(XfadeOptions, output, enc)` | 转场拼接：30+ 转场/异构归一化（含画面适配）/音轨对齐 |
 | `ComposeGrid(clips, cols, rows, audio, output, enc)` | 分屏/宫格（`ComposeGridOpts` 可配画面适配） |
-| `PictureInPicture(main, pip, opts, output, enc)` | 画中画（小窗位置/大小/透明度/播完表现；可选保留小窗声音与主画面混合并调音量） |
+| `PictureInPicture(main, pip, opts, output, enc)` | 画中画（小窗位置/大小/透明度/播完表现；主画面与小窗声音各可开关、调音量并混合） |
 | `MixAudio(video, []MixTrack, output, enc)` | 多路音频混剪 |
 
 ### 画面处理

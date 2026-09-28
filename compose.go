@@ -221,15 +221,20 @@ type PiPOptions struct {
 	Margin int
 	// Opacity 小画面不透明度 0~1，默认 1（不透明）
 	Opacity float64
-	// UsePipAudio 保留小窗声音：与主画面声音混合（解说场景：主画面
-	// 游戏声 + 小窗人声，各自可调音量）；主画面无音轨时小窗声音单独
-	// 成为音轨；小窗无音轨时静默回退为只保留主画面声音。
+	// UsePipAudio 保留小窗声音：与主画面声音混合播出（解说场景：主画面
+	// 游戏声 + 小窗人声，各自可调音量）；主画面无音轨或被 MuteMainAudio
+	// 静音时小窗声音单独成为音轨；小窗无音轨时静默忽略。
 	// 2026-09-28 语义变更：此前为"用小窗音轨替换主画面音轨"，混合才是
 	// 该场景的正解，替换语义废弃。
 	UsePipAudio bool
 	// PipVolume 小窗声音音量倍率（1=原样，0.5=减半；<=0 按 1 处理），
 	// 仅 UsePipAudio 时生效，默认 1
 	PipVolume float64
+	// MuteMainAudio 丢弃主画面声音（默认 false=保留）。与 UsePipAudio
+	// 都关时成片无声
+	MuteMainAudio bool
+	// MainVolume 主画面声音音量倍率（1=原样；<=0 按 1 处理），默认 1
+	MainVolume float64
 	// PipEnd 小窗播完后的表现（小窗比主画面短时）：PipEndHold（默认）
 	// 定格在最后一帧；PipEndHide 小窗消失、主画面继续。
 	// 无论哪种，输出时长始终以主画面为准
@@ -300,38 +305,51 @@ func (f *FFmpeg) PictureInPicture(main, pip string, opts PiPOptions, output stri
 	}
 	filter := fmt.Sprintf("%s[p];[0:v][p]overlay=%s:eof_action=%s[v]", pipChain, pos, eof)
 
-	// 小窗声音（可选）：统一采样格式后按音量增益，铺到主画面时长
-	// （短则补静音、长则截断）；主画面有声再 amix 混成单轨（duration=first
-	// 以主画面为准、normalize=0 不自动衰减——与宫格合成同一套约定，
-	// 旧版 amix 每路预乘路数抵消衰减）。小窗无音轨时静默回退为主画面声音。
-	var audioFilter string
-	if opts.UsePipAudio && pipInfo.HasAudio {
-		pv := opts.PipVolume
+	// 音轨（主画面/小窗各可开关与调音量，约定同宫格合成的 AudioSel）：
+	// 小窗声统一采样格式后按音量增益、铺到主画面时长（短补静音/长截断）；
+	// 两路都要时 amix 混成单轨（duration=first 以主画面为准、normalize=0
+	// 不自动衰减，旧版 amix 每路预乘路数抵消）；只留主画面且音量为 1 时
+	// 走流拷贝快路径（不加音频滤镜）；都关时成片无声。
+	wantMain := mainInfo.HasAudio && !opts.MuteMainAudio
+	wantPip := opts.UsePipAudio && pipInfo.HasAudio
+	mainVol := opts.MainVolume
+	if mainVol <= 0 {
+		mainVol = 1
+	}
+	pipChainAudio := func(v float64) string {
+		pv := v
 		if pv <= 0 {
 			pv = 1
 		}
+		c := "[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+		if pv != 1 {
+			c += fmt.Sprintf(",volume=%.2f", pv)
+		}
+		c += ",apad"
+		if mainInfo.Duration > 0 {
+			c += fmt.Sprintf(",atrim=0:%.3f", mainInfo.Duration)
+		}
+		return c
+	}
+	var audioFilter string
+	switch {
+	case wantMain && wantPip:
 		boost := 1.0
-		if mainInfo.HasAudio && !f.HasAmixNormalize() {
+		if !f.HasAmixNormalize() {
 			boost = 2
 		}
-		paChain := "[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
-		if v := pv * boost; v != 1 {
-			paChain += fmt.Sprintf(",volume=%.2f", v)
+		ma := "[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+		if v := mainVol * boost; v != 1 {
+			ma += fmt.Sprintf(",volume=%.2f", v)
 		}
-		paChain += ",apad"
-		if mainInfo.Duration > 0 {
-			paChain += fmt.Sprintf(",atrim=0:%.3f", mainInfo.Duration)
-		}
-		if mainInfo.HasAudio {
-			maChain := "[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
-			if boost != 1 {
-				maChain += fmt.Sprintf(",volume=%.2f", boost)
-			}
-			audioFilter = maChain + "[ma];" + paChain + "[pa]" +
-				";[ma][pa]amix=inputs=2:duration=first" + f.amixNormalizeSuffix() + "[a]"
-		} else {
-			audioFilter = paChain + "[a]" // 主画面无音轨：小窗声音单独成为音轨
-		}
+		pa := pipChainAudio(opts.PipVolume * boost)
+		audioFilter = ma + "[ma];" + pa + "[pa]" +
+			";[ma][pa]amix=inputs=2:duration=first" + f.amixNormalizeSuffix() + "[a]"
+	case wantPip:
+		// 主画面无声/被静音：小窗声音单独成为音轨
+		audioFilter = pipChainAudio(opts.PipVolume) + "[a]"
+	case wantMain && mainVol != 1:
+		audioFilter = fmt.Sprintf("[0:a]volume=%.2f[a]", mainVol)
 	}
 
 	args := []string{"-i", main, "-i", pip}
@@ -341,8 +359,8 @@ func (f *FFmpeg) PictureInPicture(main, pip string, opts PiPOptions, output stri
 	args = append(args, "-filter_complex", filter, "-map", "[v]")
 	if audioFilter != "" {
 		args = append(args, "-map", "[a]")
-	} else {
-		args = append(args, "-map", "0:a:0?")
+	} else if wantMain {
+		args = append(args, "-map", "0:a:0?") // 主画面声音原样（音量 1 流拷贝）
 	}
 	// 以主画面时长为准
 	if mainInfo.Duration > 0 {

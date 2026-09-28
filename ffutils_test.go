@@ -1929,7 +1929,7 @@ func TestPiPMixAudio(t *testing.T) {
 	}
 	out := filepath.Join(dir, "pip_mix.mp4")
 	if err := ff.PictureInPicture(main, pip, PiPOptions{
-		Scale: 0.25, UsePipAudio: true, PipVolume: 0.5,
+		Scale: 0.25, UsePipAudio: true, PipVolume: 0.5, MainVolume: 0.8,
 	}, out, EncodeOptions{}); err != nil {
 		t.Fatalf("混合小窗声音应成功: %v", err)
 	}
@@ -1975,6 +1975,63 @@ func TestPiPPipAudioWithoutMainAudio(t *testing.T) {
 	}
 	if !info.HasAudio {
 		t.Fatal("主画面无音轨时输出应保留小窗音轨")
+	}
+}
+
+func TestPiPMuteMain(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	main := filepath.Join(dir, "mute3s.mp4")
+	pip := filepath.Join(dir, "mute1s.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "3", "-y", main}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "3.mp4"), "-t", "1", "-y", pip}); err != nil {
+		t.Fatal(err)
+	}
+	// 静音主画面 + 保留小窗：只剩小窗一路声音
+	out := filepath.Join(dir, "pip_mutemain_pip.mp4")
+	if err := ff.PictureInPicture(main, pip, PiPOptions{
+		Scale: 0.25, MuteMainAudio: true, UsePipAudio: true,
+	}, out, EncodeOptions{}); err != nil {
+		t.Fatalf("静音主画面+小窗声音应成功: %v", err)
+	}
+	assertDuration(t, ff, out, 3.0, 0.3)
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasAudio {
+		t.Fatal("静音主画面后应保留小窗音轨")
+	}
+	// 两路都关：成片无声
+	outSilent := filepath.Join(dir, "pip_mutemain_all.mp4")
+	if err := ff.PictureInPicture(main, pip, PiPOptions{
+		Scale: 0.25, MuteMainAudio: true,
+	}, outSilent, EncodeOptions{}); err != nil {
+		t.Fatalf("全部静音应成功: %v", err)
+	}
+	assertDuration(t, ff, outSilent, 3.0, 0.3)
+	info, err = ff.Probe(outSilent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HasAudio {
+		t.Fatal("两路都关时成片应无声")
+	}
+	// 只调主画面音量（不涉及小窗）：滤镜路径成功且有音轨
+	outVol := filepath.Join(dir, "pip_mainvol.mp4")
+	if err := ff.PictureInPicture(main, pip, PiPOptions{
+		Scale: 0.25, MainVolume: 0.5,
+	}, outVol, EncodeOptions{}); err != nil {
+		t.Fatalf("主画面调音量应成功: %v", err)
+	}
+	info, err = ff.Probe(outVol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasAudio {
+		t.Fatal("只调主画面音量时输出应有音轨")
 	}
 }
 
