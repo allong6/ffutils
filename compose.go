@@ -54,6 +54,9 @@ func (f *FFmpeg) ComposeGridOpts(clips []string, o GridOptions, output string, e
 	if len(clips) > cols*rows {
 		return fmt.Errorf("输入数量 %d 超过网格容量 %d", len(clips), cols*rows)
 	}
+	if err := validateFitMode(o.Fit); err != nil {
+		return err
+	}
 
 	// 探测全部输入，确定统一的格子尺寸与帧率，以及合成时长基准
 	infos := make([]*ProbeResult, len(clips))
@@ -111,7 +114,7 @@ func (f *FFmpeg) ComposeGridOpts(clips []string, o GridOptions, output string, e
 	for i := 0; i < total; i++ {
 		chains = append(chains, fmt.Sprintf(
 			"[%d:v]setpts=PTS-STARTPTS,fps=%d,%s,setsar=1[g%d]",
-			i, int(fps), fitFilterChain(cellW, cellH, o.Fit, ""), i))
+			i, int(fps), fitFilterExpr(cellW, cellH, o.Fit, ""), i))
 	}
 
 	var rowLabels []string
@@ -254,6 +257,11 @@ func (f *FFmpeg) PictureInPicture(main, pip string, opts PiPOptions, output stri
 	if opts.Scale > 1 {
 		opts.Scale = 1
 	}
+	switch opts.PipEnd {
+	case "", PipEndHold, PipEndHide:
+	default:
+		return fmt.Errorf("未知小窗结束动作: %q（可选 hold/hide，见 PipEndAction）", string(opts.PipEnd))
+	}
 	m := opts.Margin
 	if m <= 0 {
 		m = 10
@@ -266,7 +274,10 @@ func (f *FFmpeg) PictureInPicture(main, pip string, opts PiPOptions, output stri
 	}
 
 	wm := Watermark{Position: opts.Position, Margin: m}
-	pos := wm.overlayExpr()
+	pos, perr := wm.overlayExpr()
+	if perr != nil {
+		return fmt.Errorf("画中画位置不支持: %w", perr)
+	}
 
 	// 小画面链：统一时间戳 -> 缩放 -> （可选半透明）
 	pipChain := fmt.Sprintf("[1:v]setpts=PTS-STARTPTS,scale=%d:-2", int(pipW))

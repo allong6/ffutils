@@ -52,6 +52,9 @@ func (f *FFmpeg) XfadeConcat(opts XfadeOptions, output string, enc EncodeOptions
 	if n < 2 {
 		return fmt.Errorf("至少需要 2 个视频才能转场拼接，收到 %d 个", n)
 	}
+	if err := validateFitMode(opts.Fit); err != nil {
+		return err
+	}
 
 	// 先探测全部片段，一次探测结果同时用于归一化参数与 offset 计算
 	infos := make([]*ProbeResult, n)
@@ -116,7 +119,7 @@ func (f *FFmpeg) XfadeConcat(opts XfadeOptions, output string, enc EncodeOptions
 		// 统一帧率、分辨率和像素宽高比，settb 统一时间基避免 xfade offset 计算漂移
 		videoChain.WriteString(fmt.Sprintf(
 			"[%d:v]setpts=PTS-STARTPTS,fps=%.3f,%s,setsar=1,settb=AVTB[c%d];",
-			i, fps, fitFilterChain(width, height, opts.Fit, ""), i))
+			i, fps, fitFilterExpr(width, height, opts.Fit, ""), i))
 
 		trans := transitionAt(opts.Transitions, i)
 		if trans.Type != "" && trans.Duration > 0 && !f.HasXfade() {

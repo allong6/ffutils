@@ -59,16 +59,30 @@ func (f *FFmpeg) AddWatermark(input string, wm Watermark, opacity float64, outpu
 	if wm.Path == "" {
 		return fmt.Errorf("水印图片路径不能为空")
 	}
-	ov := wm.overlayExpr()
-	if opacity > 0 && opacity < 1 {
-		// 半透明：先给水印图补 alpha 通道并整体调低透明度，再叠加
-		ov = fmt.Sprintf("[1:v]format=rgba,colorchannelmixer=aa=%.2f[w];[0:v][w]overlay=%s[v]",
-			opacity, wm.overlayExpr())
+	var graph string
+	if wm.Position == PosTile {
+		// 平铺水印的格子宽度按主画面宽度的 1/4 计算需要先探测主画面
+		info, err := f.Probe(input)
+		if err != nil {
+			return fmt.Errorf("探测主画面失败: %w", err)
+		}
+		graph = strings.Join(watermarkTileSegments("[0:v]", "[1:v]", "[v]",
+			tileCellWidth(info.Video.Width), opacity), ";")
 	} else {
-		ov = fmt.Sprintf("[0:v][1:v]overlay=%s[v]", ov)
+		pos, err := wm.overlayExpr()
+		if err != nil {
+			return err
+		}
+		if opacity > 0 && opacity < 1 {
+			// 半透明：先给水印图补 alpha 通道并整体调低透明度，再叠加
+			graph = fmt.Sprintf("[1:v]format=rgba,colorchannelmixer=aa=%.2f[w];[0:v][w]overlay=%s[v]",
+				opacity, pos)
+		} else {
+			graph = fmt.Sprintf("[0:v][1:v]overlay=%s[v]", pos)
+		}
 	}
 	args := []string{"-i", input, "-i", wm.Path,
-		"-filter_complex", ov, "-map", "[v]", "-map", "0:a:0?"}
+		"-filter_complex", graph, "-map", "[v]", "-map", "0:a:0?"}
 	args = append(args, enc.outputArgs()...)
 	args = append(args, output)
 	_, err := f.run(f.ffmpegBin(), args)
@@ -250,14 +264,35 @@ func (f *FFmpeg) ToHLS(input string, segSeconds int, output string) error {
 	return err
 }
 
-// tiledWatermarkChain 生成平铺水印的滤镜段：把水印缩到主画面约 1/4 宽，
-// 4×3 平铺成一张大图后整体居中叠加（W/H 为主画面尺寸表达式）。
-// opacity 0~1 时先调透明度。
-func tiledWatermarkChain(baseLabel string, opacity float64) string {
-	alpha := ""
-	if opacity > 0 && opacity < 1 {
-		alpha = fmt.Sprintf("format=rgba,colorchannelmixer=aa=%.2f,", opacity)
+// tileCellWidth 平铺水印的单格宽度：主画面宽度的 1/4，取偶（编码器友好），
+// 至少 2px。
+func tileCellWidth(mainW int) int {
+	w := mainW / 4
+	w &^= 1
+	if w < 2 {
+		w = 2
 	}
-	// scale=W/4 后 tile 4x3，overlay 居中
-	return fmt.Sprintf("[1:v]%sscale=W/4:-2,tile=4x3[w];[%s][w]overlay=(W-w)/2:(H-h)/2[v]", alpha, baseLabel)
+	return w
+}
+
+// watermarkTileSegments 生成平铺水印的 filter_graph 分段（段间以 ";" 连接）：
+// 水印（可选透明度预处理）缩到 cellW 宽后 4×3 平铺成一张大图，整体居中
+// 叠加到 mainLabel 画面上，输出 outLabel。
+//
+// 缩放宽度由调用方用主画面宽度算好传入（数值字面量），不用 scale2ref：
+//   - scale 滤镜自身只有 iw/ih 变量，直接写 W/4 取不到主画面宽度；
+//   - scale2ref 的双输出形式（引用流随路透传）是 ffmpeg 5.1+ 才有，
+//     数值方案对 4.x 也成立。
+// 居中坐标用 overlay 表达式 (W-w)/2:(H-h)/2 运行时求解（平铺图高度
+// 依水印宽高比而定，调用方无法预知）。
+func watermarkTileSegments(mainLabel, wmLabel, outLabel string, cellW int, opacity float64) []string {
+	wm := wmLabel
+	segs := []string{}
+	if opacity > 0 && opacity < 1 {
+		segs = append(segs, fmt.Sprintf("%sformat=rgba,colorchannelmixer=aa=%.2f[wa]", wmLabel, opacity))
+		wm = "[wa]"
+	}
+	segs = append(segs, fmt.Sprintf("%sscale=%d:-2,tile=4x3[wt]", wm, cellW))
+	segs = append(segs, fmt.Sprintf("%s[wt]overlay=(W-w)/2:(H-h)/2%s", mainLabel, outLabel))
+	return segs
 }

@@ -276,9 +276,9 @@ type GIFOptions struct {
 	Fps int
 	// MaxColors 调色板颜色数，<=0 默认 128；上限 256（GIF 格式上限）
 	MaxColors int
-	// Dither paletteuse 抖动算法（"bayer"/"sierra2_4a"/"none" 等），
-	// 空默认 "bayer"（有序抖动噪声少、LZW 可压缩性最好，实测比 sierra 小约一半）
-	Dither string
+	// Dither paletteuse 抖动算法，见 Dither 常量组（DitherBayer 等），
+	// 空默认 DitherBayer（有序抖动噪声少、LZW 可压缩性最好，实测比 sierra 小约一半）
+	Dither Dither
 	// BayerScale bayer 抖动尺度 1~5，数值越大抖动越轻、体积越小；<=0 默认 5
 	BayerScale int
 }
@@ -291,7 +291,7 @@ func (o GIFOptions) withDefaults() GIFOptions {
 		o.MaxColors = 256
 	}
 	if o.Dither == "" {
-		o.Dither = "bayer"
+		o.Dither = DitherBayer
 	}
 	if o.BayerScale <= 0 || o.BayerScale > 5 {
 		o.BayerScale = 5
@@ -311,6 +311,9 @@ func (f *FFmpeg) ToGIF(input string, start, end float64, width int, fps int, out
 // o 的零值字段取默认；Dither 为非 bayer 算法时 BayerScale 被忽略。
 func (f *FFmpeg) ToGIFWith(input string, start, end float64, o GIFOptions, output string) error {
 	o = o.withDefaults()
+	if !o.Dither.valid() {
+		return fmt.Errorf("未知抖动算法: %q（可选值见 Dither 常量组）", string(o.Dither))
+	}
 	var seek []string
 	if start > 0 {
 		seek = append(seek, "-ss", fmt.Sprintf("%.3f", start))
@@ -333,7 +336,7 @@ func (f *FFmpeg) ToGIFWith(input string, start, end float64, o GIFOptions, outpu
 	defer func() { _ = os.Remove(palette) }()
 	// 第二步：用调色板映射颜色（bayer 有序抖动，bayer_scale 越大抖动越轻越好压缩）
 	paletteUse := fmt.Sprintf("paletteuse=dither=%s", o.Dither)
-	if o.Dither == "bayer" {
+	if o.Dither == DitherBayer {
 		paletteUse += fmt.Sprintf(":bayer_scale=%d", o.BayerScale)
 	}
 	args = append([]string{}, seek...)

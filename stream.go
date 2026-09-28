@@ -19,24 +19,30 @@ type Watermark struct {
 	Opacity float64
 }
 
-// overlayExpr 生成 overlay 滤镜参数。
-func (w Watermark) overlayExpr() string {
+// overlayExpr 生成 overlay 滤镜的位置参数。零值默认右下角；PosTile 不是
+// 坐标能表达的（需要整条滤镜链，见 watermarkTileSegments），在只取坐标的
+// 调用点（画中画等）直接报错。
+func (w Watermark) overlayExpr() (string, error) {
 	m := w.Margin
 	if m <= 0 {
 		m = 10
 	}
 	var pos string
 	switch Position(strings.ToLower(string(w.Position))) {
+	case "", PosBottomRight:
+		pos = fmt.Sprintf("W-w-%d:H-h-%d", m, m)
 	case PosTopLeft:
 		pos = fmt.Sprintf("%d:%d", m, m)
 	case PosTopRight:
 		pos = fmt.Sprintf("W-w-%d:%d", m, m)
 	case PosBottomLeft:
 		pos = fmt.Sprintf("%d:H-h-%d", m, m)
-	default: // PosBottomRight
-		pos = fmt.Sprintf("W-w-%d:H-h-%d", m, m)
+	case PosTile:
+		return "", fmt.Errorf("平铺位置（tile）只用于整幅水印叠加，不支持此处")
+	default:
+		return "", fmt.Errorf("未知水印位置: %q", string(w.Position))
 	}
-	return pos
+	return pos, nil
 }
 
 // FrameWriterOptions 持续推帧生成视频的参数。
@@ -90,9 +96,21 @@ func (f *FFmpeg) NewFrameWriter(opts FrameWriterOptions) (*FrameWriter, error) {
 		"-i", "pipe:0",
 	}
 	if opts.Watermark != nil && opts.Watermark.Path != "" {
+		args = append(args, "-i", opts.Watermark.Path)
+		var fc string
+		if opts.Watermark.Position == PosTile {
+			// 推帧画布尺寸已知（就是输出尺寸），平铺水印按其 1/4 宽缩放
+			fc = strings.Join(watermarkTileSegments("[0:v]", "[1:v]", "[v]",
+				tileCellWidth(opts.Width), opts.Watermark.Opacity), ";")
+		} else {
+			pos, err := opts.Watermark.overlayExpr()
+			if err != nil {
+				return nil, err
+			}
+			fc = fmt.Sprintf("[0:v][1:v]overlay=%s[v]", pos)
+		}
 		args = append(args,
-			"-i", opts.Watermark.Path,
-			"-filter_complex", fmt.Sprintf("[0:v][1:v]overlay=%s[v]", opts.Watermark.overlayExpr()),
+			"-filter_complex", fc,
 			"-map", "[v]",
 		)
 	}

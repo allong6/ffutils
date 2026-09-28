@@ -1019,6 +1019,73 @@ func TestWatermarkTile(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out2)
+	// MultiCompose 整幅水印平铺
+	out3 := filepath.Join(outDir(t), "tile3.mp4")
+	err = ff.MultiCompose(MultiComposeOptions{
+		Clips:     []ClipSpec{{Path: src}},
+		Watermark: &Watermark{Path: wm, Position: PosTile, Opacity: 0.6},
+	}, out3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out3)
+}
+
+// TestEnumValidation 库自有语义枚举的非法值必须在入口报错，不允许静默
+// 回退（静默回退曾掩盖 PosTile"值存在但没接线"的问题）。
+func TestEnumValidation(t *testing.T) {
+	ff := testFF(t)
+	src := clip(t, "2.mp4")
+	wm := filepath.Join(outDir(t), "enum_wm.png")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-f", "lavfi", "-i", "color=blue:s=80x40", "-frames:v", "1", "-y", wm}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(outDir(t), "enum_out.mp4")
+
+	// 未知水印位置：不能静默落到右下角
+	if err := ff.AddWatermark(src, Watermark{Path: wm, Position: Position("middle")}, 1, out, EncodeOptions{}); err == nil {
+		t.Fatal("未知水印位置应报错")
+	} else {
+		t.Logf("AddWatermark: %v", err)
+	}
+	// 画中画不支持平铺位置
+	if err := ff.PictureInPicture(src, src, PiPOptions{Position: PosTile}, out, EncodeOptions{}); err == nil {
+		t.Fatal("画中画平铺位置应报错")
+	} else {
+		t.Logf("PictureInPicture: %v", err)
+	}
+	// 未知小窗结束动作
+	if err := ff.PictureInPicture(src, src, PiPOptions{PipEnd: PipEndAction("freeze")}, out, EncodeOptions{}); err == nil {
+		t.Fatal("未知 PipEnd 应报错")
+	}
+	// 未知适配模式（入口校验）
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Fit: &FitOptions{Width: 640, Height: 360, Mode: FitMode("diagonal")},
+	}, out, EncodeOptions{}); err == nil {
+		t.Fatal("未知适配模式应报错")
+	}
+	if err := ff.XfadeConcat(XfadeOptions{
+		Clips: []string{src, src}, Width: 320, Height: 240, Fit: FitMode("x"),
+	}, out, EncodeOptions{}); err == nil {
+		t.Fatal("XfadeConcat 未知适配模式应报错")
+	}
+	// 未知抖动算法
+	if err := ff.ToGIFWith(src, 0, 1, GIFOptions{Dither: Dither("magic")},
+		filepath.Join(outDir(t), "enum.gif")); err == nil {
+		t.Fatal("未知抖动算法应报错")
+	}
+}
+
+// TestToGIFDither 非默认抖动算法产出合法 GIF。
+func TestToGIFDither(t *testing.T) {
+	ff := testFF(t)
+	for _, d := range []Dither{DitherNone, DitherFS} {
+		out := filepath.Join(outDir(t), "gif_"+string(d)+".gif")
+		if err := ff.ToGIFWith(clip(t, "2.mp4"), 0, 1, GIFOptions{Width: 320, Dither: d}, out); err != nil {
+			t.Fatalf("%s: %v", d, err)
+		}
+		assertFileExists(t, out)
+	}
 }
 
 func TestDetectHardwareEncoders(t *testing.T) {
@@ -1506,19 +1573,31 @@ func TestFitFilterChain(t *testing.T) {
 	const cropExpr = "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080"
 	const padExpr = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black"
 	for _, c := range []struct {
-		name  string
-		mode  FitMode
-		color string
-		want  string
+		name    string
+		mode    FitMode
+		color   string
+		want    string
+		wantErr bool
 	}{
-		{"crop", FitCrop, "", cropExpr},
-		{"zero=default crop", "", "", cropExpr},
-		{"stretch", FitStretch, "", "scale=1920:1080"},
-		{"pad default black", FitPad, "", padExpr},
-		{"pad custom color", FitPad, "white", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:white"},
+		{"crop", FitCrop, "", cropExpr, false},
+		{"zero=default crop", "", "", cropExpr, false},
+		{"stretch", FitStretch, "", "scale=1920:1080", false},
+		{"pad default black", FitPad, "", padExpr, false},
+		{"pad custom color", FitPad, "white", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:white", false},
+		{"unknown mode", FitMode("diagonal"), "", "", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if got := fitFilterChain(1920, 1080, c.mode, c.color); got != c.want {
+			got, err := fitFilterChain(1920, 1080, c.mode, c.color)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("期望未知模式报错，得到 %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("fitFilterChain 报错: %v", err)
+			}
+			if got != c.want {
 				t.Fatalf("滤镜片段不符\n got: %s\nwant: %s", got, c.want)
 			}
 		})

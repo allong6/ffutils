@@ -173,3 +173,35 @@ const (
 	PresetSlower    Preset = "slower"
 	PresetVeryslow  Preset = "veryslow" // 最慢，同质量体积最小
 )
+
+// ---------------------------------------------------------------------------
+// GIF 抖动算法（GIFOptions.Dither，传给 paletteuse）
+// ---------------------------------------------------------------------------
+
+// Dither GIF 调色板映射的抖动算法。这是 ffmpeg paletteuse 的固定词表
+// （dither_table，多年来未变），因此按封闭集合校验：零值（""）默认
+// DitherBayer（有序抖动噪声少、LZW 可压缩性最好，实测比误差扩散小约一半），
+// 非法值报错而不是透传给 ffmpeg。
+type Dither string
+
+const (
+	DitherBayer     Dither = "bayer"           // 有序抖动（默认，体积最小）
+	DitherHeckbert  Dither = "heckbert"        // 快速误差扩散
+	DitherFS        Dither = "floyd_steinberg" // 经典误差扩散，质量好但噪声多
+	DitherSierra2   Dither = "sierra2"
+	DitherSierra2va Dither = "sierra2_4a"
+	DitherSierra3   Dither = "sierra3"
+	DitherBurkes    Dither = "burkes"
+	DitherAtkinson  Dither = "atkinson"
+	DitherNone      Dither = "none" // 不抖动（色带明显，体积最小）
+)
+
+// valid 报告 d 是否为已定义的抖动算法（不含零值——零值由 withDefaults 兜底）。
+func (d Dither) valid() bool {
+	switch d {
+	case DitherBayer, DitherHeckbert, DitherFS, DitherSierra2, DitherSierra2va,
+		DitherSierra3, DitherBurkes, DitherAtkinson, DitherNone:
+		return true
+	}
+	return false
+}

@@ -153,8 +153,20 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 ### 枚举常量（enums.go）
 
 `TransitionType`（30+ 转场）、`Position`（四角+平铺）、`VideoCodec`（H264/H265/VP9/copy/NVENC/QSV/AMF）、
-`AudioCodec`（AAC/MP3/Opus/FLAC/PCM/copy）、`Preset`（ultrafast~veryslow）、`Rotation`（90°/180°/翻转）。
-零值（""）= 按上下文取默认。
+`AudioCodec`（AAC/MP3/Opus/FLAC/PCM/copy）、`Preset`（ultrafast~veryslow）、`Rotation`（90°/180°/翻转）、
+`FitMode`（裁剪填满/补边/拉伸）、`PipEndAction`（定格/隐藏）、`ComposeLayout`（拼接/宫格）、
+`Dither`（GIF 抖动算法 9 种）。
+
+两类枚举的非法值策略不同：
+
+- **透传 ffmpeg 词表的开放枚举**（`VideoCodec`/`AudioCodec`/`Preset`/`TransitionType`）：
+  常量仅覆盖常用值，未列出的字符串字面量仍可直接赋值，零值（""）= 按上下文取默认；
+- **库自有语义的封闭枚举**（`Position`/`FitMode`/`Rotation`/`PipEndAction`/`Dither`）：
+  非空未知值在入口报错（不静默回退），零值（""）= 按上下文取默认。
+
+水印 `Position = PosTile`（平铺）在 AddWatermark / ApplyVideoFilters /
+MultiCompose / NewFrameWriter 四条路径生成"缩到主画面 1/4 宽后 4×3 平铺
+居中"的滤镜链；画中画（PictureInPicture）不支持平铺，传入会报错。
 
 ## gui：FFBox 桌面应用
 

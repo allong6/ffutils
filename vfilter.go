@@ -71,7 +71,11 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 		// setsar=1 必须跟在适配之后：scale 的 force_original_aspect_ratio
 		// 只保证等比缩放，不会把像素宽高比元数据写成 1:1（实测 686x968 放大
 		// 到 1920x2709 会带上 SAR 309729:309760），不归一会让播放器二次拉伸
-		vf = append(vf, fitFilterChain(chain.Fit.Width, chain.Fit.Height, chain.Fit.Mode, chain.Fit.Color), "setsar=1")
+		fc, err := fitFilterChain(chain.Fit.Width, chain.Fit.Height, chain.Fit.Mode, chain.Fit.Color)
+		if err != nil {
+			return err
+		}
+		vf = append(vf, fc, "setsar=1")
 	}
 	if chain.Fade != nil && (chain.Fade.VideoIn > 0 || chain.Fade.VideoOut > 0) {
 		info, err := f.Probe(input)
@@ -107,11 +111,27 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 			parts = append(parts, "[0:v]"+strings.Join(vf, ",")+"[v0]")
 			main = "[v0]"
 		}
-		if wm.Opacity > 0 && wm.Opacity < 1 {
+		if wm.Position == PosTile {
+			// 平铺格子宽度按主画面 1/4 计，需要先探测
+			info, err := f.Probe(input)
+			if err != nil {
+				return fmt.Errorf("探测主画面失败: %w", err)
+			}
+			parts = append(parts, watermarkTileSegments(main, "[1:v]", "[v]",
+				tileCellWidth(info.Video.Width), wm.Opacity)...)
+		} else if wm.Opacity > 0 && wm.Opacity < 1 {
+			pos, err := wm.overlayExpr()
+			if err != nil {
+				return err
+			}
 			parts = append(parts, fmt.Sprintf("[1:v]format=rgba,colorchannelmixer=aa=%.2f[w]", wm.Opacity))
-			parts = append(parts, fmt.Sprintf("%s[w]overlay=%s[v]", main, wm.overlayExpr()))
+			parts = append(parts, fmt.Sprintf("%s[w]overlay=%s[v]", main, pos))
 		} else {
-			parts = append(parts, fmt.Sprintf("%s[1:v]overlay=%s[v]", main, wm.overlayExpr()))
+			pos, err := wm.overlayExpr()
+			if err != nil {
+				return err
+			}
+			parts = append(parts, fmt.Sprintf("%s[1:v]overlay=%s[v]", main, pos))
 		}
 		args = append(args, "-filter_complex", strings.Join(parts, ";"), "-map", "[v]", "-map", "0:a:0?")
 	} else {
@@ -171,7 +191,28 @@ func subtitlePathExpr(p string) string {
 	return strings.ReplaceAll(s, "'", "\\'")
 }
 
-// fitFilterChain 生成"把任意宽高比的输入适配到 w×h 画布"的滤镜片段
+// validateFitMode 校验适配模式是否已定义（零值合法，运行时按默认 FitCrop）。
+// FitMode 是库自有语义而非 ffmpeg 词表透传，非法值在这里拦下，
+// 不静默回退（静默回退曾掩盖 PosTile 类"值存在但行为错"的问题）。
+func validateFitMode(mode FitMode) error {
+	switch mode {
+	case "", FitStretch, FitCrop, FitPad:
+		return nil
+	}
+	return fmt.Errorf("未知画面适配模式: %q（可选 stretch/crop/pad，见 FitMode 常量组）", string(mode))
+}
+
+// fitFilterChain 校验并生成"把任意宽高比的输入适配到 w×h 画布"的滤镜片段，
+// 表达式细节见 fitFilterExpr。
+func fitFilterChain(w, h int, mode FitMode, color string) (string, error) {
+	if err := validateFitMode(mode); err != nil {
+		return "", err
+	}
+	return fitFilterExpr(w, h, mode, color), nil
+}
+
+// fitFilterExpr 生成适配滤镜片段（不校验 mode——供已过入口校验的内部
+// 链组装函数使用，它们无法中途回错）。
 // （不含前导逗号，不含 setsar=1——调用方须自行在链尾补 setsar=1，见下）。
 //
 //	FitStretch：scale 直接拉到目标尺寸（变形）
@@ -184,7 +225,7 @@ func subtitlePathExpr(p string) string {
 //     crop 的默认 x/y 就是居中，因此不必自己写 (iw-ow)/2 表达式；
 //   - 等比缩放不会把 SAR 写成 1:1，必须由调用方补 setsar=1，否则部分
 //     播放器会按 SAR 二次拉伸。crop/pad 都不会修正 SAR。
-func fitFilterChain(w, h int, mode FitMode, color string) string {
+func fitFilterExpr(w, h int, mode FitMode, color string) string {
 	switch mode {
 	case FitStretch:
 		return fmt.Sprintf("scale=%d:%d", w, h)

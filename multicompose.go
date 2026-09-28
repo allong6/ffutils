@@ -126,6 +126,14 @@ func (f *FFmpeg) MultiCompose(opts MultiComposeOptions, output string) error {
 			s.Volume = 1
 		}
 	}
+	if err := validateFitMode(opts.Fit); err != nil {
+		return err
+	}
+	for k := range opts.Overlays {
+		if err := validateFitMode(opts.Overlays[k].Fit); err != nil {
+			return fmt.Errorf("叠加层 %d: %w", k+1, err)
+		}
+	}
 
 	// 探测主输入，计算预处理后的有效时长
 	infos := make([]*ProbeResult, n)
@@ -337,15 +345,25 @@ func (f *FFmpeg) MultiCompose(opts MultiComposeOptions, output string) error {
 	if wm := opts.Watermark; wm != nil && wm.Path != "" {
 		idx := n + len(opts.Overlays)
 		inputArgs = append(inputArgs, "-i", wm.Path)
-		var b strings.Builder
-		b.WriteString(fmt.Sprintf("[%d:v]", idx))
-		if wm.Opacity > 0 && wm.Opacity < 1 {
-			b.WriteString(fmt.Sprintf("format=rgba,colorchannelmixer=aa=%.2f", wm.Opacity))
-		}
-		b.WriteString("[w]")
-		chains = append(chains, b.String())
 		next := fmt.Sprintf("[v%d]", len(opts.Overlays)+1)
-		chains = append(chains, fmt.Sprintf("%s[w]overlay=%s%s", vLabel, wm.overlayExpr(), next))
+		if wm.Position == PosTile {
+			// 输出宽度 W 前面已解析，平铺格子按其 1/4 取
+			chains = append(chains, watermarkTileSegments(vLabel, fmt.Sprintf("[%d:v]", idx), next,
+				tileCellWidth(W), wm.Opacity)...)
+		} else {
+			pos, err := wm.overlayExpr()
+			if err != nil {
+				return err
+			}
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("[%d:v]", idx))
+			if wm.Opacity > 0 && wm.Opacity < 1 {
+				b.WriteString(fmt.Sprintf("format=rgba,colorchannelmixer=aa=%.2f", wm.Opacity))
+			}
+			b.WriteString("[w]")
+			chains = append(chains, b.String())
+			chains = append(chains, fmt.Sprintf("%s[w]overlay=%s%s", vLabel, pos, next))
+		}
 		vLabel = next
 	}
 
@@ -545,7 +563,7 @@ func clipVideoChain(idx int, c *ClipSpec, targetW, targetH int, fps float64, fit
 	}
 	parts = append(parts,
 		fmt.Sprintf("fps=%.3f", fps),
-		fitFilterChain(targetW, targetH, fit, ""),
+		fitFilterExpr(targetW, targetH, fit, ""),
 		"setsar=1", "settb=AVTB")
 	return fmt.Sprintf("[%d:v]%s", idx, strings.Join(parts, ","))
 }
@@ -578,7 +596,7 @@ func overlayChain(idx int, ov *OverlayLayer) string {
 	switch {
 	case ov.W > 0 && ov.H > 0:
 		// 固定矩形：宽高都给定时源画面会被塞进这个框，需要适配模式
-		parts = append(parts, fitFilterChain(ov.W, ov.H, ov.Fit, ""), "setsar=1")
+		parts = append(parts, fitFilterExpr(ov.W, ov.H, ov.Fit, ""), "setsar=1")
 	case ov.W > 0:
 		parts = append(parts, fmt.Sprintf("scale=%d:-2", ov.W))
 	case ov.H > 0:
