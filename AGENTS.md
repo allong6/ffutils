@@ -52,6 +52,15 @@ go test ./...                    # 集成测试
   不在方法里硬编码编码器；特殊需求用 `ExtraArgs` 逃生舱。
 - **帧率解析以 `avg_frame_rate` 为准**，`r_frame_rate` 常出现 90000 之类的
   时间基虚标值，只作回退（probe.go）。
+- **路径纪律（2026-09-28 定）**：Go 侧构造路径一律 `filepath.Join`（内部
+  即 Clean），禁止手拼分隔符；外部传入的路径（对话框返回、CLI 位置参数、
+  拖放、AI 计划产物）在**入口**做一次 `filepath.Clean` 归一（空值跳过——
+  `Clean("")` 会得 "."）。前端取文件名统一走 `baseName()`、去重比较走
+  `pathKey()`（app.js 单一事实源，两种斜杠都认），不散写 `split().pop()`
+  ——曾 6 处只认正斜杠致 Windows 路径显示成全路径。**例外**：嵌入 ffmpeg
+  滤镜表达式的路径必须正斜杠+转义（`\` 是滤镜转义符，见 vfilter.go 的
+  `subtitlePathExpr`）；作为 `-i` 输入传入的路径不受此限（两种斜杠 ffmpeg
+  都认）。
 - 一次性命令（转码、拼接等）用 `CombinedOutput` 类流程；持续推帧等长生命周期
   场景参照 `FrameWriter`（stream.go）：stdin 管道 + 后台 goroutine 读 stderr
   （不读会写满管道阻塞 ffmpeg）+ `Close()` 返回最终错误。
