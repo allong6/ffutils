@@ -1,6 +1,9 @@
 package ffutils
 
 import (
+	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1349,6 +1352,378 @@ func TestMultiCompose_ReverseCropRotate(t *testing.T) {
 	}
 	assertFileExists(t, out)
 	assertDuration(t, ff, out, 2.0, 0.4)
+}
+
+// ---------- 画面适配 FitMode（裁剪填满 / 完整显示 / 拉伸填满） ----------
+//
+// 这一组测试不满足于"输出分辨率对"——分辨率在三种模式下都一样，断言分辨率
+// 等于什么都没验证。真正要证明的是"有没有变形"，因此用两种可机器判定的探针：
+//   - 比例探针：源画面里画一个正方形红块。等比适配后它必须还是正方形；
+//     被拉伸则会变成明显不同的宽高比。等比模式下若把源裁没了，红块会
+//     消失或残缺，包围盒宽高比同样对不上，所以它同时兜住了"裁过头"。
+//   - 边缘探针：FitPad 会在画布留边处补黑，FitCrop/FitStretch 铺满不留边，
+//     取边缘像素即可区分（源用灰/绿等非黑底，避免和黑边混淆）。
+
+// solidClip 生成纯色无音轨测试片段。
+func solidClip(t *testing.T, ff *FFmpeg, path, color string, w, h int, dur float64) {
+	t.Helper()
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-f", "lavfi", "-i", fmt.Sprintf("color=c=%s:s=%dx%d:r=25:d=%.3f", color, w, h, dur),
+		"-pix_fmt", "yuv420p", "-y", path,
+	}); err != nil {
+		t.Fatalf("生成纯色片段 %s 失败: %v", path, err)
+	}
+}
+
+// probeClip 生成"灰底 + 居中正方形红块"的比例探针片段。
+func probeClip(t *testing.T, ff *FFmpeg, path string, w, h, box int, dur float64) {
+	t.Helper()
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-f", "lavfi", "-i", fmt.Sprintf("color=c=gray:s=%dx%d:r=25:d=%.3f", w, h, dur),
+		"-vf", fmt.Sprintf("drawbox=x=%d:y=%d:w=%d:h=%d:color=red:t=fill",
+			(w-box)/2, (h-box)/2, box, box),
+		"-pix_fmt", "yuv420p", "-y", path,
+	}); err != nil {
+		t.Fatalf("生成比例探针片段失败: %v", err)
+	}
+}
+
+// framePNG 导出视频某一时刻的帧并解码，用于断言画面内容而非仅元数据。
+func framePNG(t *testing.T, ff *FFmpeg, video string, at float64, out string) image.Image {
+	t.Helper()
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-i", video, "-ss", fmt.Sprintf("%.3f", at),
+		"-frames:v", "1", "-update", "1", "-y", out,
+	}); err != nil {
+		t.Fatalf("导出帧失败: %v", err)
+	}
+	f, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	img, err := png.Decode(f)
+	if err != nil {
+		t.Fatalf("解码帧 %s 失败: %v", out, err)
+	}
+	return img
+}
+
+// px 取像素 RGB（8 位）。
+func px(img image.Image, x, y int) (uint32, uint32, uint32) {
+	r, g, b, _ := img.At(x, y).RGBA()
+	return r >> 8, g >> 8, b >> 8
+}
+
+// 颜色判定阈值放宽：yuv420p 编解码往返会让纯色产生偏移（灰 128 实测约 126）。
+func isRed(r, g, b uint32) bool   { return r > 140 && g < 110 && b < 110 }
+func isBlack(r, g, b uint32) bool { return r < 60 && g < 60 && b < 60 }
+
+// redBBox 返回红色像素包围盒的宽高（比例探针的实测形状）。
+func redBBox(t *testing.T, img image.Image) (int, int) {
+	t.Helper()
+	b := img.Bounds()
+	minX, minY, maxX, maxY := b.Max.X, b.Max.Y, -1, -1
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl := px(img, x, y)
+			if isRed(r, g, bl) {
+				if x < minX {
+					minX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y > maxY {
+					maxY = y
+				}
+			}
+		}
+	}
+	if maxX < 0 {
+		t.Fatal("画面中未找到红色比例探针（被裁掉了？）")
+	}
+	return maxX - minX + 1, maxY - minY + 1
+}
+
+// assertSquare 断言探针宽高比接近 1（等比适配未变形），返回实测比例。
+func assertSquare(t *testing.T, img image.Image, want bool) float64 {
+	t.Helper()
+	w, h := redBBox(t, img)
+	ratio := float64(w) / float64(h)
+	isSq := ratio > 0.95 && ratio < 1.05
+	if isSq != want {
+		t.Fatalf("比例探针实测 %dx%d（宽高比 %.2f）：期望正方形=%v", w, h, ratio, want)
+	}
+	return ratio
+}
+
+// assertEdgeBlack 断言左侧边缘是否为黑边（FitPad 的留边）。
+func assertEdgeBlack(t *testing.T, img image.Image, y int, want bool) {
+	t.Helper()
+	r, g, b := px(img, 5, y)
+	if got := isBlack(r, g, b); got != want {
+		t.Fatalf("左边缘 (5,%d) 像素 RGB(%d,%d,%d)：期望黑边=%v", y, r, g, b, want)
+	}
+	t.Logf("左边缘 (5,%d) RGB(%d,%d,%d)", y, r, g, b)
+}
+
+// TestFitFilterChain 纯表达式层用例：三种模式（含零值）生成的滤镜片段。
+func TestFitFilterChain(t *testing.T) {
+	const cropExpr = "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080"
+	const padExpr = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black"
+	for _, c := range []struct {
+		name  string
+		mode  FitMode
+		color string
+		want  string
+	}{
+		{"crop", FitCrop, "", cropExpr},
+		{"zero=default crop", "", "", cropExpr},
+		{"stretch", FitStretch, "", "scale=1920:1080"},
+		{"pad default black", FitPad, "", padExpr},
+		{"pad custom color", FitPad, "white", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:white"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := fitFilterChain(1920, 1080, c.mode, c.color); got != c.want {
+				t.Fatalf("滤镜片段不符\n got: %s\nwant: %s", got, c.want)
+			}
+		})
+	}
+}
+
+// TestApplyVideoFilters_FitModes 竖屏源适配到横屏画布：
+// crop 裁掉上下、pad 左右补黑边、stretch 横向拉伸——只有 stretch 会变形。
+func TestApplyVideoFilters_FitModes(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	// 686x968 竖屏，居中 200x200 红块。适配到 1920x1080 时：
+	//   crop    → 放大 2.80 倍居中裁上下，红块 560x560（正方形）
+	//   pad     → 缩小 1.12 倍左右补黑边，红块 223x223（正方形）
+	//   stretch → 横向 x2.80、纵向 x1.12，红块 560x223（明显变形）
+	src := filepath.Join(dir, "fit_src.mp4")
+	probeClip(t, ff, src, 686, 968, 200, 1)
+
+	for _, tc := range []struct {
+		mode       FitMode
+		name       string
+		wantSquare bool
+		wantBars   bool
+	}{
+		{FitCrop, "crop", true, false},
+		{FitPad, "pad", true, true},
+		{FitStretch, "stretch", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := filepath.Join(dir, "fit_"+tc.name+".mp4")
+			if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+				Fit: &FitOptions{Width: 1920, Height: 1080, Mode: tc.mode},
+			}, out, EncodeOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			assertFileExists(t, out)
+			info, err := ff.Probe(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Video.Width != 1920 || info.Video.Height != 1080 {
+				t.Fatalf("输出应为 1920x1080，实际 %dx%d", info.Video.Width, info.Video.Height)
+			}
+			img := framePNG(t, ff, out, 0.4, filepath.Join(dir, "fit_"+tc.name+".png"))
+			assertSquare(t, img, tc.wantSquare)
+			assertEdgeBlack(t, img, 540, tc.wantBars)
+		})
+	}
+}
+
+// TestApplyVideoFilters_RotateThenFit 旋转 + 适配画布一次完成（横竖屏互换场景）：
+// 1280x720 横屏右转 90° 得 720x1280，再等比塞进 1080x1080 方画布（左右补黑边）。
+func TestApplyVideoFilters_RotateThenFit(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	src := filepath.Join(dir, "rotfit_src.mp4")
+	probeClip(t, ff, src, 1280, 720, 200, 1)
+
+	out := filepath.Join(dir, "rotfit.mp4")
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Rotate: Rot90CW,
+		Fit:    &FitOptions{Width: 1080, Height: 1080, Mode: FitPad},
+	}, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 1080 || info.Video.Height != 1080 {
+		t.Fatalf("旋转后适配应为 1080x1080，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+	img := framePNG(t, ff, out, 0.4, filepath.Join(dir, "rotfit.png"))
+	// 旋转不改变形状、适配是等比，因此探针必须仍是正方形
+	assertSquare(t, img, true)
+	assertEdgeBlack(t, img, 540, true)
+}
+
+// TestApplyVideoFilters_FitRejectsBadCanvas 适配画布尺寸非法时报错。
+func TestApplyVideoFilters_FitRejectsBadCanvas(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "bad.mp4")
+	err := ff.ApplyVideoFilters(clip(t, "2.mp4"), VideoFilterChain{
+		Fit: &FitOptions{Width: 0, Height: 1080},
+	}, out, EncodeOptions{})
+	if err == nil {
+		t.Fatal("适配画布宽度为 0 应报错")
+	}
+	if !strings.Contains(err.Error(), "适配画布宽高必须为正数") {
+		t.Fatalf("错误信息应说明画布尺寸非法，实际: %v", err)
+	}
+}
+
+// TestXfadeConcat_FitModes 拼接：竖屏绿 + 横屏蓝，目标取最大宽高 1280x968。
+// pad 时首段（竖屏）左右补黑边，crop 时铺满不留边。
+func TestXfadeConcat_FitModes(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	portrait := filepath.Join(dir, "p_green.mp4")
+	landscape := filepath.Join(dir, "l_blue.mp4")
+	solidClip(t, ff, portrait, "green", 686, 968, 1)
+	solidClip(t, ff, landscape, "blue", 1280, 720, 1)
+
+	for _, tc := range []struct {
+		mode     FitMode
+		name     string
+		wantBars bool
+	}{
+		{FitPad, "pad", true},
+		{FitCrop, "crop", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := filepath.Join(dir, "concat_"+tc.name+".mp4")
+			if err := ff.XfadeConcat(XfadeOptions{
+				Clips: []string{portrait, landscape},
+				Fit:   tc.mode,
+			}, out, EncodeOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			assertFileExists(t, out)
+			info, err := ff.Probe(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Video.Width != 1280 || info.Video.Height != 968 {
+				t.Fatalf("输出应归一化到 1280x968，实际 %dx%d", info.Video.Width, info.Video.Height)
+			}
+			// 0.3s 仍在首段（竖屏绿）内
+			img := framePNG(t, ff, out, 0.3, filepath.Join(dir, "concat_"+tc.name+".png"))
+			assertEdgeBlack(t, img, 484, tc.wantBars)
+		})
+	}
+}
+
+// TestComposeGrid_FitModes 宫格：格子取最大宽高 1280x968，左格为竖屏绿。
+func TestComposeGrid_FitModes(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	portrait := filepath.Join(dir, "gg_green.mp4")
+	landscape := filepath.Join(dir, "gg_blue.mp4")
+	solidClip(t, ff, portrait, "green", 686, 968, 1)
+	solidClip(t, ff, landscape, "blue", 1280, 720, 1)
+
+	for _, tc := range []struct {
+		mode     FitMode
+		name     string
+		wantBars bool
+	}{
+		{FitPad, "pad", true},
+		{FitCrop, "crop", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := filepath.Join(dir, "grid_"+tc.name+".mp4")
+			if err := ff.ComposeGridOpts([]string{portrait, landscape},
+				GridOptions{Cols: 2, Rows: 1, Fit: tc.mode}, out, EncodeOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			assertFileExists(t, out)
+			info, err := ff.Probe(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// 2 列并排 → 2560x968
+			if info.Video.Width != 2560 || info.Video.Height != 968 {
+				t.Fatalf("分屏应为 2560x968，实际 %dx%d", info.Video.Width, info.Video.Height)
+			}
+			img := framePNG(t, ff, out, 0.4, filepath.Join(dir, "grid_"+tc.name+".png"))
+			assertEdgeBlack(t, img, 484, tc.wantBars)
+		})
+	}
+}
+
+// TestMultiCompose_FitModes 通用合成：主输入适配 + 叠加小窗固定矩形的适配。
+func TestMultiCompose_FitModes(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	portrait := filepath.Join(dir, "mc_green.mp4")
+	landscape := filepath.Join(dir, "mc_blue.mp4")
+	solidClip(t, ff, portrait, "green", 686, 968, 1)
+	solidClip(t, ff, landscape, "blue", 1280, 720, 1)
+
+	t.Run("main clip pad", func(t *testing.T) {
+		out := filepath.Join(dir, "mc_main.mp4")
+		// 竖屏进 1280x968 画布：pad 左右补黑边
+		if err := ff.MultiCompose(MultiComposeOptions{
+			Clips: []ClipSpec{{Path: portrait, Mute: true}},
+			Width: 1280, Height: 968,
+			Fit: FitPad,
+		}, out); err != nil {
+			t.Fatal(err)
+		}
+		info, err := ff.Probe(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Video.Width != 1280 || info.Video.Height != 968 {
+			t.Fatalf("输出应为 1280x968，实际 %dx%d", info.Video.Width, info.Video.Height)
+		}
+		assertEdgeBlack(t, framePNG(t, ff, out, 0.4, filepath.Join(dir, "mc_main.png")), 484, true)
+	})
+
+	t.Run("overlay fixed box", func(t *testing.T) {
+		// 主画面与画布同为 1280x720（无留边），叠加小窗固定 300x300：
+		// 源是 686x968 竖屏，pad 会在框内左右补黑边，crop 则铺满。
+		// 取框内左侧 (25,170)：pad=黑边，crop=绿色内容。
+		for _, tc := range []struct {
+			mode     FitMode
+			name     string
+			wantBlak bool
+		}{
+			{FitPad, "pad", true},
+			{FitCrop, "crop", false},
+		} {
+			out := filepath.Join(dir, "mc_ov_"+tc.name+".mp4")
+			err := ff.MultiCompose(MultiComposeOptions{
+				Clips: []ClipSpec{{Path: landscape, Mute: true}},
+				Width: 1280, Height: 720,
+				Overlays: []OverlayLayer{{
+					Clip: ClipSpec{Path: portrait},
+					X:    10, Y: 10, W: 300, H: 300,
+					Fit: tc.mode,
+				}},
+			}, out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			img := framePNG(t, ff, out, 0.4, filepath.Join(dir, "mc_ov_"+tc.name+".png"))
+			r, g, b := px(img, 25, 170)
+			if got := isBlack(r, g, b); got != tc.wantBlak {
+				t.Fatalf("小窗内 (25,170) RGB(%d,%d,%d)：期望黑边=%v", r, g, b, tc.wantBlak)
+			}
+			t.Logf("overlay %s: 小窗内 (25,170) RGB(%d,%d,%d)", tc.name, r, g, b)
+		}
+	})
 }
 
 // ---------- 版本探测与旧版兼容 ----------

@@ -13,8 +13,9 @@ type GridAudio struct {
 }
 
 // ComposeGrid 宫格分屏：把多个视频按 cols×rows 网格同屏排列
-// （如 2 路左右分屏、4 路四宫格、9 路监控墙）。每个格子统一缩放到
-// 所有输入中的最大宽高，不足 cols×rows 的空位用黑块填充。
+// （如 2 路左右分屏、4 路四宫格、9 路监控墙）。每个格子统一到
+// 所有输入中的最大宽高（宽高比不同的输入默认裁剪填满，见 GridOptions.Fit），
+// 不足 cols×rows 的空位用黑块填充。
 // audioTrack 指定使用第几个输入的音轨（其余静默），默认 0；传 -1 表示输出无音轨。
 func (f *FFmpeg) ComposeGrid(clips []string, cols, rows int, audioTrack int, output string, enc EncodeOptions) error {
 	if audioTrack >= len(clips) {
@@ -34,6 +35,9 @@ type GridOptions struct {
 	// Shortest 时长基准：false（默认）以最长输入为准（短画面定格）；
 	// true 以最短输入为准（其余超出部分截断，适合"都只播这么长"）
 	Shortest bool
+	// Fit 各输入宽高比与格子尺寸不一致时的适配方式（见 FitMode），
+	// 零值 = FitCrop（裁剪填满，不变形）。2026-09 之前固定为拉伸变形。
+	Fit FitMode
 }
 
 // ComposeGridOpts 带选项的宫格合成（ComposeGrid/ComposeGridAudio 的
@@ -101,12 +105,13 @@ func (f *FFmpeg) ComposeGridOpts(clips []string, o GridOptions, output string, e
 
 	// 滤镜链分段收集，最终 join 成 filtergraph（避免尾部分号等格式问题）。
 	// hstack/vstack 的 inputs 至少为 2：单行/单列时直接短路，不经过 stack。
+	// 黑块占位输入本身就是 cellW×cellH，过一遍 fit 链等价于恒等变换。
 	var chains []string
 	total := cols * rows
 	for i := 0; i < total; i++ {
 		chains = append(chains, fmt.Sprintf(
-			"[%d:v]setpts=PTS-STARTPTS,fps=%d,scale=%d:%d,setsar=1[g%d]",
-			i, int(fps), cellW, cellH, i))
+			"[%d:v]setpts=PTS-STARTPTS,fps=%d,%s,setsar=1[g%d]",
+			i, int(fps), fitFilterChain(cellW, cellH, o.Fit, ""), i))
 	}
 
 	var rowLabels []string

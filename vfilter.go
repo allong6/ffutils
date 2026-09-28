@@ -11,15 +11,29 @@ type CropRect struct {
 	X, Y, W, H int
 }
 
+// FitOptions 把画面适配到一个固定尺寸的画布（横竖屏互换、统一成片尺寸）。
+type FitOptions struct {
+	// Width/Height 目标画布尺寸（像素），必须为正数；编码器通常要求偶数，
+	// 传奇数时由调用方自行保证（本结构不自动取偶，避免静默改变用户意图）
+	Width, Height int
+	// Mode 适配方式，零值 = FitCrop（裁剪填满）
+	Mode FitMode
+	// Color FitPad 的补边颜色，颜色名或 #RRGGBB；空 = black
+	Color string
+}
+
 // VideoFilterChain 一组可叠加的画面处理，ApplyVideoFilters 会把启用的
 // 项目合成一条滤镜链，一次编码完成全部（相比逐项多次调用：少几遍
 // 重编码、画质无损叠加、速度快数倍）。
 //
-// 处理顺序固定为：旋转 → 裁剪 → 淡入淡出(视频) → 字幕 → 水印。
-// 字幕在裁剪之后渲染避免被裁掉；水印最后叠加保证在最上层。
+// 处理顺序固定为：裁剪 → 旋转 → 适配画布 → 淡入淡出(视频) → 字幕 → 水印。
+// 裁剪在旋转之前（坐标按原始画面定义，先旋转会让宽高互换、坐标全部错位）；
+// 适配画布放在旋转之后，这样"先转正再塞进竖屏/横屏画布"能一次做完；
+// 字幕在裁剪与适配之后渲染避免被裁掉；水印最后叠加保证在最上层。
 type VideoFilterChain struct {
 	Crop      *CropRect    // nil = 不裁剪
 	Rotate    Rotation     // "" = 不旋转
+	Fit       *FitOptions  // nil = 不适配画布（保持裁剪/旋转后的原始尺寸）
 	Watermark *Watermark   // nil = 不加水印；Opacity 字段生效（0~1）
 	Subtitle  string       // 字幕文件路径（srt/ass），空 = 不加
 	Fade      *FadeOptions // nil = 无淡入淡出（仅 VideoIn/VideoOut 参与视频，AudioIn/Out 参与音频）
@@ -34,8 +48,11 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 	if chain.Crop != nil && (chain.Crop.W <= 0 || chain.Crop.H <= 0) {
 		return fmt.Errorf("裁剪宽高必须为正数: %dx%d", chain.Crop.W, chain.Crop.H)
 	}
+	if chain.Fit != nil && (chain.Fit.Width <= 0 || chain.Fit.Height <= 0) {
+		return fmt.Errorf("适配画布宽高必须为正数: %dx%d", chain.Fit.Width, chain.Fit.Height)
+	}
 
-	// 视频滤镜链（按固定顺序拼接：裁剪 → 旋转 → 淡入淡出 → 字幕）。
+	// 视频滤镜链（按固定顺序拼接：裁剪 → 旋转 → 适配 → 淡入淡出 → 字幕）。
 	// 裁剪必须在旋转之前：CropRect 坐标按原始画面定义（调用方按源分辨率
 	// 换算），若先旋转再裁剪，宽高互换后坐标全部错位——ffmpeg 对越界 x/y
 	// 静默钳制会裁出错误区域，比例较大时直接报错失败。
@@ -49,6 +66,12 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 			return err
 		}
 		vf = append(vf, r)
+	}
+	if chain.Fit != nil {
+		// setsar=1 必须跟在适配之后：scale 的 force_original_aspect_ratio
+		// 只保证等比缩放，不会把像素宽高比元数据写成 1:1（实测 686x968 放大
+		// 到 1920x2709 会带上 SAR 309729:309760），不归一会让播放器二次拉伸
+		vf = append(vf, fitFilterChain(chain.Fit.Width, chain.Fit.Height, chain.Fit.Mode, chain.Fit.Color), "setsar=1")
 	}
 	if chain.Fade != nil && (chain.Fade.VideoIn > 0 || chain.Fade.VideoOut > 0) {
 		info, err := f.Probe(input)
@@ -146,4 +169,33 @@ func subtitlePathExpr(p string) string {
 	s := strings.ReplaceAll(filepath.ToSlash(p), "\\", "/")
 	s = strings.ReplaceAll(s, ":", "\\:")
 	return strings.ReplaceAll(s, "'", "\\'")
+}
+
+// fitFilterChain 生成"把任意宽高比的输入适配到 w×h 画布"的滤镜片段
+// （不含前导逗号，不含 setsar=1——调用方须自行在链尾补 setsar=1，见下）。
+//
+//	FitStretch：scale 直接拉到目标尺寸（变形）
+//	FitCrop   ：等比放大到铺满画布后居中裁剪（不变形，裁掉溢出部分）
+//	FitPad    ：等比缩放到完整可见后居中补边（不变形，留边）
+//
+// 两个要点（均为实测结论，不是照抄文档）：
+//   - force_original_aspect_ratio=increase 只保证"铺满"，等比后的实际尺寸
+//     由 ffmpeg 按整数换算得出（686x968 → 1920x1080 得 1920x2709），
+//     crop 的默认 x/y 就是居中，因此不必自己写 (iw-ow)/2 表达式；
+//   - 等比缩放不会把 SAR 写成 1:1，必须由调用方补 setsar=1，否则部分
+//     播放器会按 SAR 二次拉伸。crop/pad 都不会修正 SAR。
+func fitFilterChain(w, h int, mode FitMode, color string) string {
+	switch mode {
+	case FitStretch:
+		return fmt.Sprintf("scale=%d:%d", w, h)
+	case FitPad:
+		if color == "" {
+			color = "black"
+		}
+		return fmt.Sprintf(
+			"scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:%s",
+			w, h, w, h, color)
+	default: // FitCrop（含零值 ""）
+		return fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d", w, h, w, h)
+	}
 }

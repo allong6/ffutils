@@ -46,9 +46,12 @@ type ClipSpec struct {
 // Overlays 数组顺序即层序，靠后的层在上。
 type OverlayLayer struct {
 	Clip ClipSpec
-	X, Y int     // 小窗左上角在成片中的位置（像素）
-	W, H int     // 目标尺寸；只给其一时另一边等比（-2），都 0=原尺寸
-	Opacity float64 // 0~1，1=不透明
+	X, Y int // 小窗左上角在成片中的位置（像素）
+	W, H int // 目标尺寸；只给其一时另一边等比（-2），都 0=原尺寸
+	// Fit W/H 都给定时（固定矩形）源画面的适配方式，零值 = FitCrop。
+	// 只给一边时高度/宽度是等比推出来的，天然不变形，Fit 不生效。
+	Fit      FitMode
+	Opacity  float64 // 0~1，1=不透明
 	From, To float64 // 成片时间轴上的显示时间窗（秒），<=0 表示对应边界不限制
 }
 
@@ -79,7 +82,10 @@ type MultiComposeOptions struct {
 
 	Width, Height int     // 输出尺寸，0=自动取所有主输入的最大宽高（取偶）
 	Fps           float64 // 0=首路帧率
-	Enc           EncodeOptions
+	// Fit 主输入宽高比与目标不一致时的适配方式（见 FitMode），
+	// 零值 = FitCrop（裁剪填满，不变形）。2026-09 之前固定为拉伸变形。
+	Fit FitMode
+	Enc EncodeOptions
 }
 
 // MultiCompose 按参数把多路输入合成为一个视频（一次编码）。
@@ -224,7 +230,7 @@ func (f *FFmpeg) MultiCompose(opts MultiComposeOptions, output string) error {
 	}
 	for i := range opts.Clips {
 		inputArgs = append(inputArgs, "-i", opts.Clips[i].Path)
-		chains = append(chains, clipVideoChain(i, &opts.Clips[i], tw, th, fps)+fmt.Sprintf("[c%d]", i))
+		chains = append(chains, clipVideoChain(i, &opts.Clips[i], tw, th, fps, opts.Fit)+fmt.Sprintf("[c%d]", i))
 	}
 
 	// ---- 布局 ----
@@ -513,8 +519,8 @@ func (f *FFmpeg) MultiCompose(opts MultiComposeOptions, output string) error {
 }
 
 // clipVideoChain 单路视频的预处理+归一化链（不含输出 label）。
-// 顺序：trim → crop → rotate → reverse → speed → 归一化(fps/scale/sar/tb)。
-func clipVideoChain(idx int, c *ClipSpec, targetW, targetH int, fps float64) string {
+// 顺序：trim → crop → rotate → reverse → speed → 归一化(fps/fit/sar/tb)。
+func clipVideoChain(idx int, c *ClipSpec, targetW, targetH int, fps float64, fit FitMode) string {
 	var parts []string
 	if c.TrimStart > 0 || c.TrimEnd > c.TrimStart {
 		trim := fmt.Sprintf("trim=start=%.3f", c.TrimStart)
@@ -539,7 +545,7 @@ func clipVideoChain(idx int, c *ClipSpec, targetW, targetH int, fps float64) str
 	}
 	parts = append(parts,
 		fmt.Sprintf("fps=%.3f", fps),
-		fmt.Sprintf("scale=%d:%d", targetW, targetH),
+		fitFilterChain(targetW, targetH, fit, ""),
 		"setsar=1", "settb=AVTB")
 	return fmt.Sprintf("[%d:v]%s", idx, strings.Join(parts, ","))
 }
@@ -571,7 +577,8 @@ func overlayChain(idx int, ov *OverlayLayer) string {
 	}
 	switch {
 	case ov.W > 0 && ov.H > 0:
-		parts = append(parts, fmt.Sprintf("scale=%d:%d", ov.W, ov.H))
+		// 固定矩形：宽高都给定时源画面会被塞进这个框，需要适配模式
+		parts = append(parts, fitFilterChain(ov.W, ov.H, ov.Fit, ""), "setsar=1")
 	case ov.W > 0:
 		parts = append(parts, fmt.Sprintf("scale=%d:-2", ov.W))
 	case ov.H > 0:

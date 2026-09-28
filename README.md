@@ -82,8 +82,8 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 | 方法 | 用途 |
 |---|---|
 | `Concat(paths, output, enc)` | 拼接（同参数流拷贝或重编码） |
-| `XfadeConcat(XfadeOptions, output, enc)` | 转场拼接：30+ 转场/异构归一化/音轨对齐 |
-| `ComposeGrid(clips, cols, rows, audio, output, enc)` | 分屏/宫格 |
+| `XfadeConcat(XfadeOptions, output, enc)` | 转场拼接：30+ 转场/异构归一化（含画面适配）/音轨对齐 |
+| `ComposeGrid(clips, cols, rows, audio, output, enc)` | 分屏/宫格（`ComposeGridOpts` 可配画面适配） |
 | `PictureInPicture(main, pip, opts, output, enc)` | 画中画 |
 | `MixAudio(video, []MixTrack, output, enc)` | 多路音频混剪 |
 
@@ -91,7 +91,7 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 
 | 方法 | 用途 |
 |---|---|
-| `ApplyVideoFilters(input, VideoFilterChain, output, enc)` | 组合滤镜：旋转→裁剪→淡入淡出→字幕→水印一次编码 |
+| `ApplyVideoFilters(input, VideoFilterChain, output, enc)` | 组合滤镜：裁剪→旋转→适配画布→淡入淡出→字幕→水印一次编码 |
 | `Crop(input, x, y, w, h, output, enc)` | 画面裁剪 |
 | `Rotate(input, Rotation, output, enc)` | 旋转/翻转 |
 | `AddWatermark(input, Watermark, opacity, output, enc)` | 图片水印（含平铺） |
@@ -99,6 +99,23 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 | `FadeAV(input, FadeOptions, output, enc)` | 音视频淡入淡出 |
 | `Reverse(input, output, enc)` | 倒放 |
 | `SetVolume(input, factor, output)` | 音量调节 |
+
+### 画面适配（FitMode）
+
+输入宽高比与目标不一致时的处理方式。凡是把画面强制塞进某个固定 W×H 矩形的地方
+都认这个枚举（`VideoFilterChain.Fit` / `XfadeOptions.Fit` / `GridOptions.Fit` /
+`MultiComposeOptions.Fit` / `OverlayLayer.Fit`）：
+
+| 值 | 效果 | 代价 |
+|---|---|---|
+| `FitStretch` | 拉伸填满，不保持比例 | 变形 |
+| `FitCrop`（零值默认） | 等比放大到铺满画布后居中裁剪 | 裁掉超出画布的部分 |
+| `FitPad` | 等比缩放到完整可见后居中补边 | 留边（默认黑） |
+
+`FitOptions{Width, Height, Mode, Color}` 配 `VideoFilterChain.Fit` 用，可"先转正
+再塞进竖屏/横屏画布"，与其他画面处理合并成一次编码。只指定一边、另一边自适应
+的调用（`TranscodeOptions` 只给 Width/Height 之一、`PiPOptions.Scale` 推出的
+`scale=W:-2`）天然等比，不受影响，也不需要这个选项。
 
 ### 帧操作
 

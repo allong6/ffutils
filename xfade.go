@@ -34,11 +34,15 @@ type XfadeOptions struct {
 	Audio []AudioPick
 
 	// Width/Height 输出分辨率；<=0 时自动取所有片段中的最大宽高（取偶）。
-	// xfade 要求所有输入分辨率/帧率一致，内部会对每段做 scale/fps 归一化。
+	// xfade 要求所有输入分辨率/帧率一致，内部会对每段做 fps/fit 归一化。
 	Width  int
 	Height int
 	// Fps 输出帧率；<=0 时取第一个片段的帧率（不可信时回退 30）
 	Fps float64
+	// Fit 片段宽高比与目标分辨率不一致时的适配方式（见 FitMode），
+	// 零值 = FitCrop（裁剪填满，不变形）。2026-09 之前固定为拉伸变形，
+	// 需要旧观感请显式传 FitStretch。
+	Fit FitMode
 }
 
 // XfadeConcat 将多个视频带转场地拼接为一个视频，同时把各片段的音频
@@ -108,11 +112,11 @@ func (f *FFmpeg) XfadeConcat(opts XfadeOptions, output string, enc EncodeOptions
 		}
 
 		inputArgs = append(inputArgs, "-i", path)
-		// 归一化链：setpts 重置时间戳起点（转场叠加的前提），fps/scale/setsar
-		// 统一帧率分辨率和宽高比，settb 统一时间基避免 xfade offset 计算漂移
+		// 归一化链：setpts 重置时间戳起点（转场叠加的前提），fps/fit/setsar
+		// 统一帧率、分辨率和像素宽高比，settb 统一时间基避免 xfade offset 计算漂移
 		videoChain.WriteString(fmt.Sprintf(
-			"[%d:v]setpts=PTS-STARTPTS,fps=%.3f,scale=%d:%d,setsar=1,settb=AVTB[c%d];",
-			i, fps, width, height, i))
+			"[%d:v]setpts=PTS-STARTPTS,fps=%.3f,%s,setsar=1,settb=AVTB[c%d];",
+			i, fps, fitFilterChain(width, height, opts.Fit, ""), i))
 
 		trans := transitionAt(opts.Transitions, i)
 		if trans.Type != "" && trans.Duration > 0 && !f.HasXfade() {

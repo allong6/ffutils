@@ -58,14 +58,15 @@
 | 时间统一 float64 秒 | 不引入毫秒，与 ffmpeg 参数天然一致 |
 | 滤镜 label 不复用 | `c%d`（片段归一化）/ `x%d`（叠加结果）两套命名空间 |
 | 帧率用 `avg_frame_rate` | `r_frame_rate` 常出现 90000 时间基虚标值 |
-| 组合滤镜链 | 旋转→裁剪→淡入淡出→字幕→水印一次编码（少几遍重编码） |
+| 组合滤镜链 | 裁剪→旋转→适配画布→淡入淡出→字幕→水印一次编码（少几遍重编码） |
+| 画面适配 FitMode | 凡把画面塞进固定 W×H 矩形处统一认 stretch/crop/pad，零值=crop（不变形、裁掉溢出） |
 
 ### 文件结构
 
 ```
 ffmpeg.go       入口结构体 FFmpeg、run() 统一执行、超时、错误包装
 probe.go        Probe()：一次 ffprobe 返回全部流信息（JSON 解析）
-enums.go        TransitionType/Position/VideoCodec/AudioCodec/Preset/Rotation
+enums.go        TransitionType/Position/FitMode/VideoCodec/AudioCodec/Preset/Rotation
 transcode.go    Transcode/Remux/Trim/Speed/ToGIF/TranscodeCommand
 concat.go       Concat（流拷贝或重编码）
 xfade.go        XfadeConcat（转场拼接+音轨对齐+归一化）
