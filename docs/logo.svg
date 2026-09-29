@@ -1,0 +1,30 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>AI Video Processing App Logo</title>
+  <defs>
+    <linearGradient id="playGrad" x1="208" y1="192" x2="320" y2="320" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8BB8FF"/>
+      <stop offset="1" stop-color="#4A90E2"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="512" height="512" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#A9B7C9" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <!-- 应用图标底板：白卡片 + 浅灰边框 -->
+  <rect x="24" y="24" width="464" height="464" rx="104" fill="#FFFFFF" stroke="#E3E6EA" stroke-width="4" filter="url(#shadow)"/>
+
+  <!-- 视频窗口 -->
+  <rect x="112" y="144" width="288" height="224" rx="44" fill="#F5F6F8" stroke="#E3E6EA" stroke-width="4"/>
+
+  <!-- 播放按钮：视频处理 -->
+  <path d="M232 204 L232 308 L320 256 Z" fill="url(#playGrad)"/>
+
+  <!-- AI 星芒：AI 功能 -->
+  <path d="M392 100 L405 137 L442 150 L405 163 L392 200 L379 163 L342 150 L379 137 Z"
+        fill="#A8C7FA" stroke="#FFFFFF" stroke-width="10" stroke-linejoin="round"/>
+
+  <!-- 时间轴：剪辑感 -->
+  <line x1="152" y1="408" x2="360" y2="408" stroke="#E3E6EA" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="232" cy="408" r="12" fill="#6EA8FE"/>
+  <circle cx="312" cy="408" r="12" fill="#A8C7FA"/>
+</svg>

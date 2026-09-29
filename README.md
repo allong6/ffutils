@@ -1,5 +1,9 @@
 # ffutils
 
+<p align="center">
+  <img src="docs/logo.svg" width="160" alt="ffutils logo">
+</p>
+
 **零外部依赖的 ffmpeg/ffprobe Go 工具包**：探测/转码/拼接/转场/混音/水印/
 字幕/淡入淡出/分屏/画中画/抽帧/HLS/推帧/组合滤镜/硬件编码探测，
 130+ 集成测试覆盖全部公开 API。基于它构建的桌面应用见
