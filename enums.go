@@ -99,6 +99,9 @@ const (
 // PiPOptions.Scale 推出的 scale=W:-2）天然等比，不受影响。
 //
 // 零值（""）表示"由调用方法按上下文决定默认值"，当前各处默认均为 FitCrop。
+//
+// 自 v1.0.0 起统一引入：此前各合成路径默认拉伸（FitStretch 的行为），
+// 需要旧观感时显式传入。
 type FitMode string
 
 const (
@@ -182,6 +185,7 @@ const (
 // （dither_table，多年来未变），因此按封闭集合校验：零值（""）默认
 // DitherBayer（有序抖动噪声少、LZW 可压缩性最好，实测比误差扩散小约一半），
 // 非法值报错而不是透传给 ffmpeg。
+// 自 v1.0.0 起为封闭枚举（自由字符串透传的旧语义废止）。
 type Dither string
 
 const (

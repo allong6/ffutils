@@ -229,11 +229,13 @@ func (f *FFmpeg) Speed(input string, speed float64, output string, enc EncodeOpt
 // SpeedRange 带时间区间的变速：先快速 seek 到 start 再处理到 end（秒；
 // end<=0 表示到结尾），与全量 Speed 语义一致。无音轨输入（GIF/无声
 // 视频）自动只变速画面。
+// Since v1.0.0.
 func (f *FFmpeg) SpeedRange(input string, start, end, speed float64, output string, enc EncodeOptions) error {
 	return f.SpeedOpts(input, speed, PlayOptions{Start: start, End: end}, output, enc)
 }
 
 // SpeedOpts 变速完整版：区间 + 宽度/帧率（作为视频链前置滤镜）。
+// Since v1.0.0.
 func (f *FFmpeg) SpeedOpts(input string, speed float64, p PlayOptions, output string, enc EncodeOptions) error {
 	if speed <= 0 || speed == 1 {
 		return fmt.Errorf("倍率必须为正且不等于 1: %v", speed)
@@ -269,6 +271,7 @@ func seekArgs(start, end float64) []string {
 
 // GIFOptions GIF 输出参数，零值字段使用默认（与旧 ToGIF 行为一致取向）。
 // 体积随宽度/帧率/颜色数近似线性变化，是 GIF 体积的三要素。
+// Since v1.0.0.
 type GIFOptions struct {
 	// Width 目标宽度（高度按比例），<=0 默认 640
 	Width int
@@ -309,6 +312,7 @@ func (f *FFmpeg) ToGIF(input string, start, end float64, width int, fps int, out
 
 // ToGIFWith 带完整质量参数的 GIF 转换（调色板两步法）。
 // o 的零值字段取默认；Dither 为非 bayer 算法时 BayerScale 被忽略。
+// Since v1.0.0（旧 ToGIF 保持兼容，转调本方法）。
 func (f *FFmpeg) ToGIFWith(input string, start, end float64, o GIFOptions, output string) error {
 	o = o.withDefaults()
 	if !o.Dither.valid() {

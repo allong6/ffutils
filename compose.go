@@ -211,7 +211,8 @@ func (f *FFmpeg) SplitScreen(left, right string, vertical bool, output string, e
 	return f.ComposeGrid([]string{left, right}, 2, 1, 0, output, enc)
 }
 
-// PiPOptions 画中画参数。
+// PiPOptions 画中画参数。声音相关四项（UsePipAudio/PipVolume/
+// MuteMainAudio/MainVolume）Since v1.0.0。
 type PiPOptions struct {
 	// Scale 小画面宽度占主画面宽度的比例（0.05~1.0），默认 0.3
 	Scale float64
@@ -224,8 +225,8 @@ type PiPOptions struct {
 	// UsePipAudio 保留小窗声音：与主画面声音混合播出（解说场景：主画面
 	// 游戏声 + 小窗人声，各自可调音量）；主画面无音轨或被 MuteMainAudio
 	// 静音时小窗声音单独成为音轨；小窗无音轨时静默忽略。
-	// 2026-09-28 语义变更：此前为"用小窗音轨替换主画面音轨"，混合才是
-	// 该场景的正解，替换语义废弃。
+	// 自 v1.0.0（2026-09-28）起语义变更：此前为"用小窗音轨替换主画面
+	// 音轨"，混合才是该场景的正解，替换语义废弃。
 	UsePipAudio bool
 	// PipVolume 小窗声音音量倍率（1=原样，0.5=减半；<=0 按 1 处理），
 	// 仅 UsePipAudio 时生效，默认 1
