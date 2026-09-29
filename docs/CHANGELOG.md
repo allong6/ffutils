@@ -16,6 +16,9 @@ ffutils 的全部功能更新、方法变更与废弃都记录在本文件，供
 - 迁入 `tools/build-ffmpeg` 裁剪构建工具（自 ffbox 迁入）：与本库能力
   面对齐的 ffmpeg/ffprobe 白名单自编译，encoder/muxer 白名单来自
   enums.go 全量枚举，输入面全保留。不影响库 API。
+- 文档纯库化梳理：README 清除旧仓库遗留的 gui/ai/license/测试/文档
+  索引章节与失效链接；新增 [docs/API.md](API.md) 功能方法清单（全部
+  公开 API 分组一览）。不影响库 API。
 
 ## v1.0.0（2026-09-29）：独立成库
 

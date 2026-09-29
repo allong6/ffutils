@@ -5,7 +5,8 @@
 130+ 集成测试覆盖全部公开 API。基于它构建的桌面应用见
 [FFBox](https://github.com/allong6/ffbox)。
 
-> 2026-09-29 从 allong6/Ffmpeg_utils 仓库 base 分支独立成库，历史完整保留。
+> 2026-09-29 从原 Ffmpeg_utils 仓库独立成库（v1.0.0），历史完整保留；
+> 各版本变更与迁移指引见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
 
 ## 安装
 
@@ -13,18 +14,25 @@
 go get github.com/allong6/ffutils
 ```
 
-要求：本机可用的 ffmpeg/ffprobe（PATH 可见，或 NewWithDir 显式指定目录）。
+要求：本机可用的 ffmpeg/ffprobe（PATH 可见；也可在 `New()` 返回的实例上
+设置 `FFmpegPath` / `FFprobePath` / `Dir` 字段显式指定）。
 
 ## 快速开始
+
+```go
+ff := ffutils.New()
+info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ...
+_ = ff.Transcode("in.mp4", ffutils.TranscodeOptions{Width: 1280}, "out.mp4")
+```
 
 ```bash
 # 库测试（需在库根放 bin/ffmpeg.exe + test/ 素材，均不入库，缺失自动 skip）
 go test ./...
 ```
 
-```
-
 ## API 总览
+
+完整方法清单见 [docs/API.md](docs/API.md)（含参数类型与版本标注），以下为能力分组速览。
 
 ### 探测
 
@@ -52,7 +60,10 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 | `XfadeConcat(XfadeOptions, output, enc)` | 转场拼接：30+ 转场/异构归一化（含画面适配）/音轨对齐 |
 | `ComposeGrid(clips, cols, rows, audio, output, enc)` | 分屏/宫格（`ComposeGridOpts` 可配画面适配） |
 | `PictureInPicture(main, pip, opts, output, enc)` | 画中画（小窗位置/大小/透明度/播完表现；主画面与小窗声音各可开关、调音量并混合） |
+| `MultiCompose(opts, output)` | 通用合成：多段预处理（截取/裁剪/旋转/倒放/变速）→ 拼接（带转场）或宫格 → 叠加小窗 → 水印/字幕 → 配乐策略，一次成片 |
+| `SplitScreen(left, right, vertical, output, enc)` | 双画面分屏快捷方式（左右/上下） |
 | `MixAudio(video, []MixTrack, output, enc)` | 多路音频混剪 |
+| `MixBackground(video, bgm, mainVol, bgmVol, loop, output, enc)` | 原声 + 背景音乐混音 |
 
 ### 画面处理
 
@@ -101,6 +112,7 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 | `ExtractAudio(input, opts, output)` | 抽音频（mp3/aac/wav 按扩展名） |
 | `Mute(input, output)` | 去音轨 |
 | `ReplaceAudio(video, audio, loop, output, enc)` | 替换背景音乐 |
+| `DetectVolume(path)` | 音量探测（平均/峰值 dB） |
 
 ### HLS / 硬件
 
@@ -142,71 +154,27 @@ MultiCompose / NewFrameWriter 四条路径生成"缩到主画面 1/4 宽后 4×3
 产物与构建凭据 manifest 供 FFBox 打包内嵌分发，构建与验证流程见该目录
 [README](tools/build-ffmpeg/README.md)。
 
-## gui：FFBox 桌面应用
+## 下游应用
 
-详见 [gui/README.md](gui/README.md)。核心特性：
-
-- 六页签：转换/剪辑/画面/合成/音频/抽帧
-- 简易/专业双模式（全局开关，预设 vs 全参数）
-- 批处理队列 + 进度条 + 取消 + 批次汇总（完成x·跳过y·失败z）
-- 时间锚点（距开头/距结尾/按进度）逐文件解析 + 宽容降级（跳过/钳制）
-- 硬件编码探测（★NVENC 绿色注入）
-- 预设管理（保存/应用/导入/导出 JSON）
-- CLI 同二进制子命令（12 个，供脚本/自动化用）
-
-## ai：AI 一句话处理
-
-详见 [gui/README.md](gui/README.md#ai-一句话处理)。三步确认制：
-
-```
-描述 → 提示词（可编辑）→ 计划（JSON 可改）→ 执行 → 任务栏
-```
-
-## license：激活与商业化
-
-详见 [license-server/README.md](license-server/README.md)。
-
-### 核心机制
-
-| 层 | 机制 |
-|---|---|
-| 设备码 | Windows MachineGuid 哈希（FF-XXXXXXXX-XXXXXXXX，稳定唯一） |
-| 激活码 | Ed25519 签名：`base64(payload).sig`，平台私钥签发/GUI 公钥验签 |
-| 离线可用 | 激活码存 `~/.ffbox/license.json`，启动时本地验签（不联网） |
-| 防时间回拨 | 本地时间水印（HMAC 防篡改）+ max(now, 水印) + 24h 容差 |
-| 模块激活 | 令牌/激活码携带 modules（convert/shot/ai/...），GUI 按模块解锁页签 |
-| 合规检测 | 启动+首任务前联网上报：签名响应+nonce+时间戳防伪造/重放 |
-| 停用控制 | /admin/revoke 幂等（自动/手动统一），端侧下次检测即注销 |
-
-### license-server 部署
-
-```bash
-cd license-server && go build -o ffbox-license .
-FFBOX_ADMIN_KEY=你的密钥 ./ffbox-license  # 默认 :8787
-# 首启打印公钥 → 贴入 gui/service/license.go → wails build → 发布
-```
+[FFBox](https://github.com/allong6/ffbox) 桌面应用基于本库构建（转换/剪辑/
+画面/合成/音频/抽帧六页签、简易/专业双模式、批处理队列、CLI 子命令等
+都在应用层）。FFBox 侧的能力缺口与缺陷通过本仓库的 issue 提出（附需求
+背景与开发建议），处理约定见 [AGENTS.md](AGENTS.md)。
 
 ## 测试
 
 ```bash
-# 一键流水线
-powershell -File gui\scripts\test-all.ps1
-# L1: Go 测试（base/gui/app+CLI/license-server）
-# L2: 前端静态检查（ID 交叉/div 平衡/方法绑定/运行时冒烟）
-# L3: CLI 冒烟
-# L4（发布前）: GUI 11 场景（gui/testbridge/README.md）
+# 库测试（需在库根放 bin/ffmpeg.exe + test/ 素材，均不入库，缺失自动 skip）
+go test ./...
 ```
-
-详见 [docs/TESTING.md](docs/TESTING.md)。
 
 ## 文档索引
 
-| 文档 | 内容 | 分支 |
-|---|---|---|
-| [AGENTS.md](AGENTS.md) | 开发规则/分支职责/红线/测试流程 | 全分支统一 |
-| [gui/README.md](gui/README.md) | GUI 构建/运行/CLI/预设/硬件/打包 | gui |
-| [docs/DESIGN.md](docs/DESIGN.md) | GUI 设计：双模式/布局/里程碑 | gui |
-| [docs/TESTING.md](docs/TESTING.md) | 测试标准流程 L1-L4 | gui |
-| [gui/testbridge/README.md](gui/testbridge/README.md) | GUI 桥接测试（11 场景+已知坑） | gui |
-| [license-server/README.md](license-server/README.md) | 激活平台部署/接口/安全设计 | license |
+| 文档 | 内容 |
+|---|---|
+| [docs/API.md](docs/API.md) | 功能方法清单：全部公开 API 分组一览 |
+| [docs/CHANGELOG.md](docs/CHANGELOG.md) | 更新记录：各版本功能更新/方法变更/废弃与迁移指引 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 技术架构：核心设计/文件结构 |
+| [tools/build-ffmpeg/README.md](tools/build-ffmpeg/README.md) | 裁剪版 ffmpeg 构建（白名单对齐本库能力面） |
+| [AGENTS.md](AGENTS.md) | 开发规则/版本与变更纪律/Issue 工作流/约定 |
 

@@ -12,6 +12,7 @@
 |---|---|---|
 | **本文档** | 开发规则/版本与变更纪律/项目约定/测试流程 | 每次开工前 |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | 版本变更记录：功能更新/方法变更/废弃与迁移指引 | **每次功能更新随同一提交必更**；发版时定稿 |
+| [docs/API.md](docs/API.md) | 功能方法清单：全部公开 API 分组一览 | 公开 API 增删后必更（与 README 总览同步） |
 | [README.md](README.md) | 项目全景/API 总览/快速开始 | 公开 API 变更后必更 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 技术架构：核心设计/文件结构 | 分层/文件结构变化后必更 |
 | [tools/build-ffmpeg/README.md](tools/build-ffmpeg/README.md) | 裁剪版 ffmpeg/ffprobe 构建（白名单对齐本库能力面） | 构建脚本/白名单变化后必更 |
@@ -54,6 +55,26 @@ go test ./...                    # 集成测试（130+ 用例，覆盖全部公�
 
 发版流程：CHANGELOG 定稿 → `go vet && go build && go test` 全绿 →
 `git tag vX.Y.Z`（配置远端后 `git push --tags`）。
+
+## Issue 工作流（下游需求入口）
+
+下游（FFBox 为主）会以 issue 向本库提需求/报缺陷，通常附需求背景与
+开发建议。issue 就是本库的需求队列，每次会话必须同步：
+
+1. **开工先查**：会话开始时确认有无待实现 issue——已配置远端时
+   `gh issue list --state open` 逐条查看并向用户同步；远端未建立或
+   gh 不可用时向用户口头确认。有待实现 issue 就商定本轮处理哪些，
+   纳入本轮任务一起推进。
+2. **会话中分析推进**：动手前先分析 issue 的需求背景与开发建议，
+   方案与库内既有约定对齐（零值默认、枚举策略、run() 统一执行、
+   filter label 规则等）；与 issue 建议有取舍时，先在 issue 下留言
+   说明理由再实现。
+3. **提交绑定 issue**：issue 相关的提交必须在 commit message 中引用
+   issue 编号（如 `feat: xxx (#12)`）；合入即应关闭的用关闭关键字
+   （`fix #12` / `close #12`），其余用 `(#12)` 保持可追溯。
+4. **完成收尾**：实现合入后在 issue 下回复说明（变更点 + 引入版本 +
+   迁移指引指向 CHANGELOG），下游可适配后关闭 issue；需要等发版/tag
+   才生效的，注明计划版本再关闭。
 
 ## 项目约定
 
