@@ -1,63 +1,30 @@
-# FFBox / ffutils
+# ffutils
 
-**本地视频处理工具箱**：从零依赖的 ffmpeg Go 工具包到桌面应用、AI 编排与商业化平台。
+**零外部依赖的 ffmpeg/ffprobe Go 工具包**：探测/转码/拼接/转场/混音/水印/
+字幕/淡入淡出/分屏/画中画/抽帧/HLS/推帧/组合滤镜/硬件编码探测，
+130+ 集成测试覆盖全部公开 API。基于它构建的桌面应用见
+[FFBox](https://github.com/allong6/ffbox)。
 
-## 项目结构（按分支）
+> 2026-09-29 从 allong6/Ffmpeg_utils 仓库 base 分支独立成库，历史完整保留。
 
-```
-                    ┌──────────────────────────────────────────────┐
-                    │  master（稳定发布基线，跟随 base）              │
-                    └──────────────────┬───────────────────────────┘
-                                       │ merge
-                    ┌──────────────────▼───────────────────────────┐
-                    │  base — ffutils 库（本分支）                    │
-                    │  纯 Go ffmpeg/ffprobe 工具包，零外部依赖         │
-                    │  44 个集成测试，覆盖全部公开 API                 │
-                    └──────────────────┬───────────────────────────┘
-                                       │ merge
-                    ┌──────────────────▼───────────────────────────┐
-                    │  gui — FFBox 桌面应用                          │
-                    │  Wails v2 + 前端，简易/专业双模式，CLI 同二进制   │
-                    ├──────────────────┬───────────────────────────┤
-                    │                  │ merge                      │
-                    │  ┌───────────────▼─────────────┐  ┌─────────▼──────────┐
-                    │  │ ai — AI 一句话处理            │  │ license — 激活+商业化│
-                    │  │ OpenAI 兼容接口，三步确认制    │  │ Ed25519 激活码      │
-                    │  │ 提示词可编辑，计划可修改再执行  │  │ license-server 平台 │
-                    │  └─────────────────────────────┘  │ 申请单/微信支付/停用 │
-                    │                                   └────────────────────┘
-                    └──────────────────────────────────────────────┘
+## 安装
+
+```bash
+go get github.com/allong6/ffutils
 ```
 
-| 分支 | 内容 | 核心文件 |
-|---|---|---|
-| `base` | ffutils 库：探测/转码/拼接/转场/混音/水印/字幕/淡入淡出/分屏/画中画/抽帧/HLS/推帧/组合滤镜/硬件编码探测 | `*.go`（根目录） |
-| `gui` | FFBox 桌面应用：六页签 GUI + CLI + 批处理队列 + 时间锚点 + 宽容降级 | `gui/` |
-| `ai` | AI 编排：一句话→提示词→计划→执行（三步确认制） | `gui/service/ai.go` |
-| `license` | 激活体系：设备码/Ed25519 验签/离线可用/防回拨/模块激活/合规检测/停用控制 + license-server 平台 | `gui/service/license*.go`, `license-server/` |
-| `master` | 稳定发布基线（跟随 base） | — |
+要求：本机可用的 ffmpeg/ffprobe（PATH 可见，或 NewWithDir 显式指定目录）。
 
 ## 快速开始
 
 ```bash
-# 库测试（需 bin/ffmpeg.exe + test/ 素材）
-cd . && go test ./...
-
-# GUI 构建
-cd gui && wails build
-
-# 一键测试流水线（L1-L3，约 4 分钟）
-powershell -File gui\scripts\test-all.ps1
-
-# CLI（同二进制子命令）
-gui/build/bin/FFBox.exe probe test/2.mp4
-gui/build/bin/FFBox.exe convert *.mp4 --preset mp4-small
-
-# 打包分发
-powershell -File gui\scripts\package.ps1 -WithFFmpeg
+# 库测试（需在库根放 bin/ffmpeg.exe + test/ 素材，均不入库，缺失自动 skip）
+go test ./...
 ```
 
-## base：ffutils 库 API 总览
+```
+
+## API 总览
 
 ### 探测
 
@@ -235,3 +202,4 @@ powershell -File gui\scripts\test-all.ps1
 | [docs/TESTING.md](docs/TESTING.md) | 测试标准流程 L1-L4 | gui |
 | [gui/testbridge/README.md](gui/testbridge/README.md) | GUI 桥接测试（11 场景+已知坑） | gui |
 | [license-server/README.md](license-server/README.md) | 激活平台部署/接口/安全设计 | license |
+
