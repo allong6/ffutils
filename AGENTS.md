@@ -54,17 +54,17 @@ go test ./...                    # 集成测试（130+ 用例，覆盖全部公�
    CHANGELOG 给出迁移示例。
 
 发版流程：CHANGELOG 定稿 → `go vet && go build && go test` 全绿 →
-`git tag vX.Y.Z`（配置远端后 `git push --tags`）。
+`git tag vX.Y.Z` → `git push --tags`。
 
 ## Issue 工作流（下游需求入口）
 
 下游（FFBox 为主）会以 issue 向本库提需求/报缺陷，通常附需求背景与
 开发建议。issue 就是本库的需求队列，每次会话必须同步：
 
-1. **开工先查**：会话开始时确认有无待实现 issue——已配置远端时
-   `gh issue list --state open` 逐条查看并向用户同步；远端未建立或
-   gh 不可用时向用户口头确认。有待实现 issue 就商定本轮处理哪些，
-   纳入本轮任务一起推进。
+1. **开工先查**：会话开始时确认有无待实现 issue——`gh issue list
+   --state open`（gh 未安装时用 curl + 本机 GitHub 令牌查
+   `repos/allong6/ffutils/issues?state=open`，或向用户口头确认），逐条
+   向用户同步；有待实现 issue 就商定本轮处理哪些，纳入本轮任务一起推进。
 2. **会话中分析推进**：动手前先分析 issue 的需求背景与开发建议，
    方案与库内既有约定对齐（零值默认、枚举策略、run() 统一执行、
    filter label 规则等）；与 issue 建议有取舍时，先在 issue 下留言
@@ -104,8 +104,8 @@ go test ./...                    # 集成测试（130+ 用例，覆盖全部公�
 - 提交信息用中文，正文概括本次改动内容。
 - **单分支 main 直接开发**：功能、修复、文档全部直接提交 main。旧仓库的
   base/gui/master 多分支模型已随独立成库作废，不再迁回。
-- 本仓库不保留指向旧仓库（video_generate / Ffmpeg_utils）的 remote；
-  建立新远端后 `git remote add origin <新仓库地址>`。
+- 本仓库 remote 指向 `github.com/allong6/ffutils`（公开，库文件在仓库
+  根）；不保留指向旧仓库（video_generate / Ffmpeg_utils）的 remote。
 - `.gitignore` 排除了 `bin/`、`test/` 素材、`test/output/`、
   `legacy_ffmpeg.go.txt`，不要把这些加进版本库。
 - 提交前必须 `git status --short` 检查暂存内容，禁止盲目的 `git add -A`

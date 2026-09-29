@@ -13,18 +13,22 @@ ffutils 的全部功能更新、方法变更与废弃都记录在本文件，供
 
 ## Unreleased
 
-- 迁入 `tools/build-ffmpeg` 裁剪构建工具（自 ffbox 迁入）：与本库能力
-  面对齐的 ffmpeg/ffprobe 白名单自编译，encoder/muxer 白名单来自
-  enums.go 全量枚举，输入面全保留。不影响库 API。
-- 文档纯库化梳理：README 清除旧仓库遗留的 gui/ai/license/测试/文档
-  索引章节与失效链接；新增 [docs/API.md](API.md) 功能方法清单（全部
-  公开 API 分组一览）。不影响库 API。
+（暂无——下一次功能更新写在这里，发版时更名为版本号 + 日期。）
 
 ## v1.0.0（2026-09-29）：独立成库
 
 从旧仓库 Ffmpeg_utils（本地工作副本 video_generate）base 分支独立成
-单独的库仓库，git 历史完整保留。基线能力与 API 总览见
-[README](../README.md)。
+单独的库仓库 [github.com/allong6/ffutils](https://github.com/allong6/ffutils)，
+git 历史完整保留。基线能力与 API 总览见 [README](../README.md)。
+
+### 仓库内资产（不影响库 API）
+
+- `tools/build-ffmpeg` 裁剪构建工具（自 ffbox 迁入）：与本库能力面对齐
+  的 ffmpeg/ffprobe 白名单自编译（encoder/muxer 白名单来自 enums.go
+  全量枚举，输入面全保留），产物供 FFBox 打包内嵌分发。
+- 文档体系：[docs/API.md](API.md) 功能方法清单、
+  [docs/ARCHITECTURE.md](ARCHITECTURE.md) 纯库架构、README 纯库化
+  （清除旧仓库 gui/license 遗留章节）。
 
 ### 从旧仓库迁移
 
