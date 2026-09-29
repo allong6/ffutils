@@ -135,6 +135,13 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 MultiCompose / NewFrameWriter 四条路径生成"缩到主画面 1/4 宽后 4×3 平铺
 居中"的滤镜链；画中画（PictureInPicture）不支持平铺，传入会报错。
 
+## tools：裁剪版 ffmpeg 构建
+
+[tools/build-ffmpeg/](tools/build-ffmpeg/)：与本库能力面对齐的 ffmpeg/ffprobe
+白名单裁剪自编译（encoder/muxer 白名单来自 enums.go 全量枚举，输入面全保留）。
+产物与构建凭据 manifest 供 FFBox 打包内嵌分发，构建与验证流程见该目录
+[README](tools/build-ffmpeg/README.md)。
+
 ## gui：FFBox 桌面应用
 
 详见 [gui/README.md](gui/README.md)。核心特性：
