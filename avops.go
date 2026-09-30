@@ -66,8 +66,12 @@ func (f *FFmpeg) AddWatermark(input string, wm Watermark, opacity float64, outpu
 		if err != nil {
 			return fmt.Errorf("探测主画面失败: %w", err)
 		}
-		graph = strings.Join(watermarkTileSegments("[0:v]", "[1:v]", "[v]",
-			tileCellWidth(info.Video.Width), opacity), ";")
+		segs, err := watermarkTileSegments("[0:v]", "[1:v]", "[v]",
+			tileCellWidth(info.Video.Width), opacity, wm.TileGap)
+		if err != nil {
+			return err
+		}
+		graph = strings.Join(segs, ";")
 	} else {
 		pos, err := wm.overlayExpr()
 		if err != nil {
@@ -279,8 +283,8 @@ func tileCellWidth(mainW int) int {
 }
 
 // watermarkTileSegments 生成平铺水印的 filter_graph 分段（段间以 ";" 连接）：
-// 水印（可选透明度预处理）缩到 cellW 宽后 4×3 平铺成一张大图，整体居中
-// 叠加到 mainLabel 画面上，输出 outLabel。
+// 水印（可选透明度预处理）缩到格宽（可选 gap 透明间隔）补足 12 帧后
+// 4×3 平铺成一张大图，整体居中叠加到 mainLabel 画面上，输出 outLabel。
 //
 // 缩放宽度由调用方用主画面宽度算好传入（数值字面量），不用 scale2ref：
 //   - scale 滤镜自身只有 iw/ih 变量，直接写 W/4 取不到主画面宽度；
@@ -288,14 +292,30 @@ func tileCellWidth(mainW int) int {
 //     数值方案对 4.x 也成立。
 // 居中坐标用 overlay 表达式 (W-w)/2:(H-h)/2 运行时求解（平铺图高度
 // 依水印宽高比而定，调用方无法预知）。
-func watermarkTileSegments(mainLabel, wmLabel, outLabel string, cellW int, opacity float64) []string {
+//
+// 水印图是单帧流，而 tile 每格消费一帧：不补帧时仅首格有水印、其余
+// 11 格是 tile 的默认黑色填充——必须在 tile 前 loop 把这一帧重复满
+// 4×3=12 格（见 issue #1）。
+func watermarkTileSegments(mainLabel, wmLabel, outLabel string, cellW int, opacity float64, gap int) ([]string, error) {
 	wm := wmLabel
 	segs := []string{}
 	if opacity > 0 && opacity < 1 {
 		segs = append(segs, fmt.Sprintf("%sformat=rgba,colorchannelmixer=aa=%.2f[wa]", wmLabel, opacity))
 		wm = "[wa]"
 	}
-	segs = append(segs, fmt.Sprintf("%sscale=%d:-2,tile=4x3[wt]", wm, cellW))
+	// 格子宽度固定 cellW；有间隔时水印内容缩到 cellW-2×gap，pad 补透明
+	// 边（black@0）后格宽仍为 cellW——网格总尺寸与无间隔时一致。
+	scaleW := cellW
+	pad := ""
+	if gap > 0 {
+		if 2*gap >= cellW-2 {
+			return nil, fmt.Errorf("平铺间隔 %d 过大：格宽 %d，水印内容需剩至少 2px", gap, cellW)
+		}
+		scaleW = cellW - 2*gap
+		pad = fmt.Sprintf(",pad=%d:ih+%d:%d:%d:color=black@0", cellW, 2*gap, gap, gap)
+	}
+	segs = append(segs, fmt.Sprintf("%sscale=%d:-2%s,loop=loop=%d:size=1:start=0,tile=4x3[wt]",
+		wm, scaleW, pad, 4*3-1))
 	segs = append(segs, fmt.Sprintf("%s[wt]overlay=(W-w)/2:(H-h)/2%s", mainLabel, outLabel))
-	return segs
+	return segs, nil
 }

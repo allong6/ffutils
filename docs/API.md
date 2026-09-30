@@ -59,7 +59,7 @@
 | `ApplyVideoFilters(input, chain, output, enc)` | 组合滤镜一次编码：裁剪（`CropRect`）→ 旋转 → 适配画布（`FitOptions`）→ 淡入淡出 → 字幕 → 水印（`VideoFilterChain`） |
 | `Crop(input, x, y, w, h, output, enc)` | 画面裁剪 |
 | `Rotate(input, r, output, enc)` | 旋转/翻转（`Rotation`） |
-| `AddWatermark(input, wm, opacity, output, enc)` | 图片水印（`Watermark`；`Position` 含四角与平铺 PosTile） |
+| `AddWatermark(input, wm, opacity, output, enc)` | 图片水印（`Watermark`；`Position` 含四角与平铺 PosTile，平铺可用 `TileGap` 格间透明间隔，Since v1.1.0） |
 | `BurnSubtitle(input, subtitle, output, enc)` | 硬字幕（srt/ass） |
 | `FadeAV(input, opts, output, enc)` | 音视频淡入淡出（`FadeOptions`） |
 | `Reverse(input, output, enc)` | 整条倒放 |

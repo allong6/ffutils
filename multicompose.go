@@ -348,8 +348,12 @@ func (f *FFmpeg) MultiCompose(opts MultiComposeOptions, output string) error {
 		next := fmt.Sprintf("[v%d]", len(opts.Overlays)+1)
 		if wm.Position == PosTile {
 			// 输出宽度 W 前面已解析，平铺格子按其 1/4 取
-			chains = append(chains, watermarkTileSegments(vLabel, fmt.Sprintf("[%d:v]", idx), next,
-				tileCellWidth(W), wm.Opacity)...)
+			segs, err := watermarkTileSegments(vLabel, fmt.Sprintf("[%d:v]", idx), next,
+				tileCellWidth(W), wm.Opacity, wm.TileGap)
+			if err != nil {
+				return err
+			}
+			chains = append(chains, segs...)
 		} else {
 			pos, err := wm.overlayExpr()
 			if err != nil {

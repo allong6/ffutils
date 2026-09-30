@@ -117,8 +117,12 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 			if err != nil {
 				return fmt.Errorf("探测主画面失败: %w", err)
 			}
-			parts = append(parts, watermarkTileSegments(main, "[1:v]", "[v]",
-				tileCellWidth(info.Video.Width), wm.Opacity)...)
+			segs, err := watermarkTileSegments(main, "[1:v]", "[v]",
+				tileCellWidth(info.Video.Width), wm.Opacity, wm.TileGap)
+			if err != nil {
+				return err
+			}
+			parts = append(parts, segs...)
 		} else if wm.Opacity > 0 && wm.Opacity < 1 {
 			pos, err := wm.overlayExpr()
 			if err != nil {

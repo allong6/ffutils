@@ -17,6 +17,11 @@ type Watermark struct {
 	Margin int
 	// Opacity 不透明度 0~1（0 或 >=1 视为完全不透明）
 	Opacity float64
+	// TileGap 平铺水印（PosTile）格子的透明间隔（像素），<=0 无间隔。
+	// 格子宽度固定为主画面 1/4，间隔从水印内容宽度里扣（水印缩到
+	// 格宽-2×间隔后补透明边，网格总尺寸不变）。
+	// Since v1.1.0.
+	TileGap int
 }
 
 // overlayExpr 生成 overlay 滤镜的位置参数。零值默认右下角；PosTile 不是
@@ -100,8 +105,12 @@ func (f *FFmpeg) NewFrameWriter(opts FrameWriterOptions) (*FrameWriter, error) {
 		var fc string
 		if opts.Watermark.Position == PosTile {
 			// 推帧画布尺寸已知（就是输出尺寸），平铺水印按其 1/4 宽缩放
-			fc = strings.Join(watermarkTileSegments("[0:v]", "[1:v]", "[v]",
-				tileCellWidth(opts.Width), opts.Watermark.Opacity), ";")
+			segs, err := watermarkTileSegments("[0:v]", "[1:v]", "[v]",
+				tileCellWidth(opts.Width), opts.Watermark.Opacity, opts.Watermark.TileGap)
+			if err != nil {
+				return nil, err
+			}
+			fc = strings.Join(segs, ";")
 		} else {
 			pos, err := opts.Watermark.overlayExpr()
 			if err != nil {

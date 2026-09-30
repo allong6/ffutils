@@ -993,6 +993,78 @@ func TestExtractFrames_Sampled(t *testing.T) {
 	}
 }
 
+// frameRegionStats 抽取视频 at 秒处一帧（PNG 解码），返回 (fx,fy) 比例
+// 坐标处 16×16 像素区域的平均亮度（0~255，Rec.601 近似）与平均饱和度
+// （0~1）。用于画面内容的机器断言：平铺格是否落了水印、淡出末帧是否
+// 已全黑——黑帧亮度≈16 且饱和度≈0，红色半透明水印会让两项明显抬高。
+func frameRegionStats(t *testing.T, ff *FFmpeg, path string, at, fx, fy float64) (luma, sat float64) {
+	t.Helper()
+	region := filepath.Join(outDir(t),
+		fmt.Sprintf("probe_%s_%d.png", strings.ReplaceAll(filepath.Base(path), ".", "_"), int(at*1000)))
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-ss", fmt.Sprintf("%.3f", at), "-i", path, "-frames:v", "1", "-y", region,
+	}); err != nil {
+		t.Fatalf("抽帧失败 %s@%.2fs: %v", path, at, err)
+	}
+	fh, err := os.Open(region)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fh.Close()
+	img, err := png.Decode(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := img.Bounds()
+	cx, cy := b.Min.X+int(float64(b.Dx())*fx), b.Min.Y+int(float64(b.Dy())*fy)
+	var n int
+	var sr, sg, sb float64
+	for y := cy - 8; y < cy+8; y++ {
+		for x := cx - 8; x < cx+8; x++ {
+			if x < b.Min.X || y < b.Min.Y || x >= b.Max.X || y >= b.Max.Y {
+				continue
+			}
+			r, g, bl, _ := img.At(x, y).RGBA()
+			sr += float64(r >> 8)
+			sg += float64(g >> 8)
+			sb += float64(bl >> 8)
+			n++
+		}
+	}
+	if n == 0 {
+		t.Fatalf("采样区域为空 %s (%.2f,%.2f)", path, fx, fy)
+	}
+	r, g, bl := sr/float64(n), sg/float64(n), sb/float64(n)
+	luma = 0.299*r + 0.587*g + 0.114*bl
+	maxc, minc := r, r
+	if g > maxc {
+		maxc = g
+	}
+	if bl > maxc {
+		maxc = bl
+	}
+	if g < minc {
+		minc = g
+	}
+	if bl < minc {
+		minc = bl
+	}
+	sat = (maxc - minc) / 255
+	return
+}
+
+// assertRegionPainted 断言该区域不是纯黑（水印已落上）：黑色填充亮度
+// ≈16、饱和度≈0，半透明红水印会让至少一项明显抬高。
+func assertRegionPainted(t *testing.T, ff *FFmpeg, path string, at, fx, fy float64, what string) {
+	t.Helper()
+	luma, sat := frameRegionStats(t, ff, path, at, fx, fy)
+	if luma < 24 && sat < 0.06 {
+		t.Fatalf("%s @%.2fs（%.0f%%,%.0f%%）仍是黑色填充（luma=%.1f sat=%.2f）——tile 补帧未生效",
+			what, at, fx*100, fy*100, luma, sat)
+	}
+	t.Logf("%s: luma=%.1f sat=%.2f", what, luma, sat)
+}
+
 func TestWatermarkTile(t *testing.T) {
 	ff := testFF(t)
 	src := filepath.Join(outDir(t), "tile_src.mp4")
@@ -1003,12 +1075,16 @@ func TestWatermarkTile(t *testing.T) {
 	if _, err := ff.run(ff.ffmpegBin(), []string{"-f", "lavfi", "-i", "color=red:s=100x50", "-frames:v", "1", "-y", wm}); err != nil {
 		t.Fatal(err)
 	}
+	// 采样点取网格右列中部格子的中心（格宽=画面 1/4，网格满宽居中，
+	// 纵向中部必在网格内）：tile 补帧修复前该处是黑色填充。
+	const fx, fy = 0.875, 0.5
 	// AddWatermark 平铺
 	out := filepath.Join(outDir(t), "tile1.mp4")
 	if err := ff.AddWatermark(src, Watermark{Path: wm, Position: PosTile}, 0.5, out, EncodeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out)
+	assertRegionPainted(t, ff, out, 1.0, fx, fy, "tile1/AddWatermark 右列格")
 	// 组合链平铺（与淡入淡出叠加）
 	out2 := filepath.Join(outDir(t), "tile2.mp4")
 	err := ff.ApplyVideoFilters(src, VideoFilterChain{
@@ -1019,6 +1095,7 @@ func TestWatermarkTile(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out2)
+	assertRegionPainted(t, ff, out2, 1.0, fx, fy, "tile2/组合链 右列格")
 	// MultiCompose 整幅水印平铺
 	out3 := filepath.Join(outDir(t), "tile3.mp4")
 	err = ff.MultiCompose(MultiComposeOptions{
@@ -1029,6 +1106,35 @@ func TestWatermarkTile(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out3)
+	assertRegionPainted(t, ff, out3, 1.0, fx, fy, "tile3/MultiCompose 右列格")
+}
+
+// TestWatermarkTileGap 平铺间隔参数（TileGap，issue #1）：正常间隔出片且
+// 格内仍有水印（间隔露出的画面属观感，进 REVIEW 人工核对）；间隔大到
+// 挤没水印内容时入口报错。
+func TestWatermarkTileGap(t *testing.T) {
+	ff := testFF(t)
+	src := filepath.Join(outDir(t), "gap_src.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "2", "-y", src}); err != nil {
+		t.Fatal(err)
+	}
+	wm := filepath.Join(outDir(t), "gap_wm.png")
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-f", "lavfi", "-i", "color=red:s=100x50", "-frames:v", "1", "-y", wm}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(outDir(t), "gap1.mp4")
+	if err := ff.AddWatermark(src, Watermark{Path: wm, Position: PosTile, TileGap: 16}, 0.5, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileExists(t, out)
+	assertRegionPainted(t, ff, out, 1.0, 0.875, 0.5, "gap16 格内水印")
+	// 间隔过大：入口报错，不出片
+	if err := ff.AddWatermark(src, Watermark{Path: wm, Position: PosTile, TileGap: 100000}, 0.5,
+		filepath.Join(outDir(t), "gap_bad.mp4"), EncodeOptions{}); err == nil {
+		t.Fatal("间隔过大应报错")
+	} else {
+		t.Logf("间隔过大: %v", err)
+	}
 }
 
 // TestEnumValidation 库自有语义枚举的非法值必须在入口报错，不允许静默

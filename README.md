@@ -149,7 +149,8 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 
 水印 `Position = PosTile`（平铺）在 AddWatermark / ApplyVideoFilters /
 MultiCompose / NewFrameWriter 四条路径生成"缩到主画面 1/4 宽后 4×3 平铺
-居中"的滤镜链；画中画（PictureInPicture）不支持平铺，传入会报错。
+居中"的滤镜链（`Watermark.TileGap` 可加格间透明间隔）；画中画
+（PictureInPicture）不支持平铺，传入会报错。
 
 ## tools：裁剪版 ffmpeg 构建
 
