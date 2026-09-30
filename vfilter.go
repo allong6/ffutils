@@ -52,10 +52,12 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 		return fmt.Errorf("适配画布宽高必须为正数: %dx%d", chain.Fit.Width, chain.Fit.Height)
 	}
 
-	// 视频滤镜链（按固定顺序拼接：裁剪 → 旋转 → 适配 → 淡入淡出 → 字幕）。
+	// 视频滤镜链（按固定顺序拼接：裁剪 → 旋转 → 适配 → 字幕 → 淡入淡出）。
 	// 裁剪必须在旋转之前：CropRect 坐标按原始画面定义（调用方按源分辨率
 	// 换算），若先旋转再裁剪，宽高互换后坐标全部错位——ffmpeg 对越界 x/y
 	// 静默钳制会裁出错误区域，比例较大时直接报错失败。
+	// fade 恒在链尾作用于成片整体：水印与字幕在其之前叠加/烧制，淡出时
+	// 随画面一起变暗（见 issue #2）。
 	var vf []string
 	if chain.Crop != nil {
 		vf = append(vf, fmt.Sprintf("crop=%d:%d:%d:%d", chain.Crop.W, chain.Crop.H, chain.Crop.X, chain.Crop.Y))
@@ -77,16 +79,18 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 		}
 		vf = append(vf, fc, "setsar=1")
 	}
+	// fade 表达式单独收集，恒排在链尾（作用于成片整体，见上方说明）。
+	var fadeExprs []string
 	if chain.Fade != nil && (chain.Fade.VideoIn > 0 || chain.Fade.VideoOut > 0) {
 		info, err := f.Probe(input)
 		if err != nil {
 			return err
 		}
 		if chain.Fade.VideoIn > 0 {
-			vf = append(vf, fmt.Sprintf("fade=t=in:st=0:d=%.3f", chain.Fade.VideoIn))
+			fadeExprs = append(fadeExprs, fmt.Sprintf("fade=t=in:st=0:d=%.3f", chain.Fade.VideoIn))
 		}
 		if chain.Fade.VideoOut > 0 {
-			vf = append(vf, fmt.Sprintf("fade=t=out:st=%.3f:d=%.3f", info.Duration-chain.Fade.VideoOut, chain.Fade.VideoOut))
+			fadeExprs = append(fadeExprs, fmt.Sprintf("fade=t=out:st=%.3f:d=%.3f", info.Duration-chain.Fade.VideoOut, chain.Fade.VideoOut))
 		}
 		chain.audioFade = afadeExpr(info.Duration, chain.Fade)
 	}
@@ -111,13 +115,20 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 			parts = append(parts, "[0:v]"+strings.Join(vf, ",")+"[v0]")
 			main = "[v0]"
 		}
+		// fade 恒在链尾作用于成片整体：水印（与 vf 里的字幕）都在 fade
+		// 之前叠加/烧制，淡出时随画面一起变暗消失（见 issue #2——
+		// 此前 fade 在主画面段，淡出时水印保持鲜亮）。
+		wmOut := "[v]"
+		if len(fadeExprs) > 0 {
+			wmOut = "[vm]"
+		}
 		if wm.Position == PosTile {
 			// 平铺格子宽度按主画面 1/4 计，需要先探测
 			info, err := f.Probe(input)
 			if err != nil {
 				return fmt.Errorf("探测主画面失败: %w", err)
 			}
-			segs, err := watermarkTileSegments(main, "[1:v]", "[v]",
+			segs, err := watermarkTileSegments(main, "[1:v]", wmOut,
 				tileCellWidth(info.Video.Width), wm.Opacity, wm.TileGap)
 			if err != nil {
 				return err
@@ -129,19 +140,22 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 				return err
 			}
 			parts = append(parts, fmt.Sprintf("[1:v]format=rgba,colorchannelmixer=aa=%.2f[w]", wm.Opacity))
-			parts = append(parts, fmt.Sprintf("%s[w]overlay=%s[v]", main, pos))
+			parts = append(parts, fmt.Sprintf("%s[w]overlay=%s%s", main, pos, wmOut))
 		} else {
 			pos, err := wm.overlayExpr()
 			if err != nil {
 				return err
 			}
-			parts = append(parts, fmt.Sprintf("%s[1:v]overlay=%s[v]", main, pos))
+			parts = append(parts, fmt.Sprintf("%s[1:v]overlay=%s%s", main, pos, wmOut))
+		}
+		if len(fadeExprs) > 0 {
+			parts = append(parts, wmOut+strings.Join(fadeExprs, ",")+"[v]")
 		}
 		args = append(args, "-filter_complex", strings.Join(parts, ";"), "-map", "[v]", "-map", "0:a:0?")
 	} else {
 		args = append(args, "-i", input)
-		if len(vf) > 0 {
-			args = append(args, "-vf", strings.Join(vf, ","))
+		if len(vf)+len(fadeExprs) > 0 {
+			args = append(args, "-vf", strings.Join(append(vf, fadeExprs...), ","))
 		}
 		args = append(args, "-map", "0:v:0", "-map", "0:a:0?")
 	}

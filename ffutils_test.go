@@ -1096,6 +1096,17 @@ func TestWatermarkTile(t *testing.T) {
 	}
 	assertFileExists(t, out2)
 	assertRegionPainted(t, ff, out2, 1.0, fx, fy, "tile2/组合链 右列格")
+	// 淡出末帧：水印必须随成片一起变暗（issue #2 修复前 fade 只作用
+	// 主画面段，淡出时水印保持鲜亮）。取时长-0.05s 处，修复后接近全黑。
+	out2Info, err := ff.Probe(out2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lumaTail, satTail := frameRegionStats(t, ff, out2, out2Info.Duration-0.05, fx, fy)
+	if lumaTail >= 32 || satTail >= 0.12 {
+		t.Fatalf("淡出末帧水印未随成片变暗（luma=%.1f sat=%.2f）——fade 未作用于水印层", lumaTail, satTail)
+	}
+	t.Logf("tile2 淡出末帧: luma=%.1f sat=%.2f", lumaTail, satTail)
 	// MultiCompose 整幅水印平铺
 	out3 := filepath.Join(outDir(t), "tile3.mp4")
 	err = ff.MultiCompose(MultiComposeOptions{
