@@ -13,12 +13,16 @@ import (
 )
 
 // 测试资源位置：bin/ 下放 ffmpeg.exe、ffprobe.exe，test/ 下放测试素材。
-// 产物输出到 test/output/<用例名>/，其中部分需人工查看，见 test/output/REVIEW.md。
+// 产物按测试批次隔离：test/output/ffutils/<yyyy-MM-dd HH_mm_ss>/<用例名>/，
+// 批次目录以本次测试开始时间命名；其中部分需人工查看，见 test/output/REVIEW.md。
 
 var (
 	binDir  = findDir("bin")
 	testDir = findDir("test")
 	outRoot = filepath.Join(testDir, "output")
+	// 批次目录：每次测试运行（进程启动即测试开始）单独建目录，与其他
+	// 批次隔离——与 gui 侧包测试的约定一致（gui-service-ai/2026-09-30 09_47_42）。
+	runRoot = filepath.Join(outRoot, "ffutils", time.Now().Format("2006-01-02 15_04_05"))
 )
 
 // findDir 从当前包目录向上查找子目录（兼容 go test 的工作目录）。
@@ -54,10 +58,10 @@ func exe(name string) string {
 	return name
 }
 
-// outDir 为当前用例创建独立的输出目录。
+// outDir 为当前用例在本次测试的批次目录下创建独立的输出目录。
 func outDir(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(outRoot, t.Name())
+	dir := filepath.Join(runRoot, t.Name())
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

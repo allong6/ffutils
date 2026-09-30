@@ -30,9 +30,10 @@ go test ./...                    # 集成测试（130+ 用例，覆盖全部公�
 - 新增公开方法必须配 1-3 个测试用例（ffutils_test.go），自动断言能断言的
   一切：输出文件存在且非空、时长与理论值误差、分辨率、编码器、流类型。
   用 `assertDuration` / `assertFileExists` / `outDir` / `testFF` 辅助函数。
-- 测试产物输出到 `test/output/<用例名>/`，机器无法判断的（转场效果、混音
-  听感、画面内容）追加到 `test/output/REVIEW.md` 的人工确认清单，用
-  checkbox 标注。
+- 测试产物按批次隔离：输出到 `test/output/ffutils/<yyyy-MM-dd HH_mm_ss>/<用例名>/`
+  （批次目录以本次测试开始时间命名，与 gui 侧包测试约定一致）；机器无法
+  判断的（转场效果、混音听感、画面内容）追加到 `test/output/REVIEW.md` 的
+  人工确认清单，用 checkbox 标注。
 
 ## 版本与变更记录（对外契约，每次功能更新强制执行）
 
