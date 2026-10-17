@@ -104,24 +104,24 @@ func assertDuration(t *testing.T, ff *FFmpeg, path string, want, tolerance float
 
 func TestProbe(t *testing.T) {
 	ff := testFF(t)
-	info, err := ff.Probe(clip(t, "1.mp4"))
+	info, err := ff.Probe(clip(t, "04_waterfall.mp4"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !info.HasVideo || !info.HasAudio {
-		t.Fatalf("1.mp4 应同时含视频和音频流: %+v", info)
+		t.Fatalf("04_waterfall.mp4 应同时含视频和音频流: %+v", info)
 	}
-	if info.Video.Width != 686 || info.Video.Height != 968 {
-		t.Fatalf("分辨率应为 686x968，实际 %dx%d", info.Video.Width, info.Video.Height)
+	if info.Video.Width != 1920 || info.Video.Height != 1080 {
+		t.Fatalf("分辨率应为 1920x1080，实际 %dx%d", info.Video.Width, info.Video.Height)
 	}
-	if info.Video.FrameRate < 50 || info.Video.FrameRate > 80 {
-		t.Fatalf("帧率应在 50~80（avg_frame_rate 约 62.8），实际 %.2f", info.Video.FrameRate)
+	if info.Video.FrameRate < 29 || info.Video.FrameRate > 31 {
+		t.Fatalf("帧率应约 29.97，实际 %.2f", info.Video.FrameRate)
 	}
-	if info.Duration < 90 || info.Duration > 92 {
-		t.Fatalf("总时长应约 91s，实际 %.2f", info.Duration)
+	if info.Duration < 33 || info.Duration > 34 {
+		t.Fatalf("总时长应约 33.5s，实际 %.2f", info.Duration)
 	}
-	if info.Audio.Duration < 90 || info.Audio.Duration > 91.5 {
-		t.Fatalf("音频时长应约 91s，实际 %.2f", info.Audio.Duration)
+	if info.Audio.Duration < 33 || info.Audio.Duration > 34 {
+		t.Fatalf("音频时长应约 33.5s，实际 %.2f", info.Audio.Duration)
 	}
 	t.Logf("probe ok: dur=%.2fs video=%dx%d@%.1f audio=%.2fs",
 		info.Duration, info.Video.Width, info.Video.Height, info.Video.FrameRate, info.Audio.Duration)
@@ -131,7 +131,7 @@ func TestProbe_NoAudioStream(t *testing.T) {
 	ff := testFF(t)
 	// 先生成一个无音频的视频，再探测
 	mute := filepath.Join(outDir(t), "mute.mp4")
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-an", "-t", "1", "-y", mute}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "03_autumn_road.mp4"), "-an", "-t", "1", "-y", mute}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := ff.Probe(mute)
@@ -151,7 +151,7 @@ func TestProbe_NoAudioStream(t *testing.T) {
 func TestExtractFrame(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "frame.png")
-	if err := ff.ExtractFrame(clip(t, "1.mp4"), 1.5, out); err != nil {
+	if err := ff.ExtractFrame(clip(t, "04_waterfall.mp4"), 1.5, out); err != nil {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out)
@@ -160,7 +160,7 @@ func TestExtractFrame(t *testing.T) {
 func TestExtractFrame_FirstFrame(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "frame0.png")
-	if err := ff.ExtractFrame(clip(t, "1.mp4"), 0, out); err != nil {
+	if err := ff.ExtractFrame(clip(t, "04_waterfall.mp4"), 0, out); err != nil {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out)
@@ -169,7 +169,7 @@ func TestExtractFrame_FirstFrame(t *testing.T) {
 func TestExtractCover(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "cover.jpg")
-	if err := ff.ExtractCover(clip(t, "1.mp4"), out); err != nil {
+	if err := ff.ExtractCover(clip(t, "04_waterfall.mp4"), out); err != nil {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out)
@@ -180,7 +180,7 @@ func TestExtractCover(t *testing.T) {
 func TestExtractAudio_MP3(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "audio.mp3")
-	if err := ff.ExtractAudio(clip(t, "1.mp4"), AudioExtractOptions{Bitrate: "128k"}, out); err != nil {
+	if err := ff.ExtractAudio(clip(t, "04_waterfall.mp4"), AudioExtractOptions{Bitrate: "128k"}, out); err != nil {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out)
@@ -198,18 +198,18 @@ func TestExtractAudio_MP3(t *testing.T) {
 func TestConcat_Copy(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "concat.mp4")
-	err := ff.Concat([]string{clip(t, "1.mp4"), clip(t, "2.mp4")}, out, EncodeOptions{VideoCodec: "copy"})
+	err := ff.Concat([]string{clip(t, "04_waterfall.mp4"), clip(t, "03_autumn_road.mp4")}, out, EncodeOptions{VideoCodec: "copy"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out)
-	// 91.04 + 10.37 ≈ 101.41
-	assertDuration(t, ff, out, 101.41, 0.2)
+	// 33.51 + 8.61 ≈ 42.12
+	assertDuration(t, ff, out, 42.12, 0.2)
 }
 
 func TestConcat_NeedTwoFiles(t *testing.T) {
 	ff := testFF(t)
-	err := ff.Concat([]string{clip(t, "1.mp4")}, filepath.Join(outDir(t), "x.mp4"), EncodeOptions{})
+	err := ff.Concat([]string{clip(t, "04_waterfall.mp4")}, filepath.Join(outDir(t), "x.mp4"), EncodeOptions{})
 	if err == nil {
 		t.Fatal("单文件拼接应报错")
 	}
@@ -221,7 +221,7 @@ func TestXfadeConcat_FadeAndCut(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "xfade.mp4")
 	err := ff.XfadeConcat(XfadeOptions{
-		Clips: []string{clip(t, "1.mp4"), clip(t, "2.mp4"), clip(t, "3.mp4")},
+		Clips: []string{clip(t, "04_waterfall.mp4"), clip(t, "03_autumn_road.mp4"), clip(t, "07_sea_aerial.mp4")},
 		Transitions: []Transition{
 			{Type: "fade", Duration: 0.5},
 			{}, // 第二处硬切
@@ -231,16 +231,16 @@ func TestXfadeConcat_FadeAndCut(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out)
-	// 91.04 + 10.37 + 58.50 - 0.5(转场重叠) ≈ 159.41
-	assertDuration(t, ff, out, 159.41, 0.1)
+	// 33.51 + 8.61 + 33.05 - 0.5(转场重叠) ≈ 74.67
+	assertDuration(t, ff, out, 74.67, 0.1)
 
-	// 三段分辨率/编码各不相同，输出应统一为最大宽高（1280x974）
+	// 三段分辨率各不相同（1920x1080 / 1920x1080 / 1280x720），输出应统一为最大宽高
 	info, err := ff.Probe(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Video.Width != 1280 || info.Video.Height != 974 {
-		t.Fatalf("输出应归一化到 1280x968，实际 %dx%d", info.Video.Width, info.Video.Height)
+	if info.Video.Width != 1920 || info.Video.Height != 1080 {
+		t.Fatalf("输出应归一化到 1920x1080，实际 %dx%d", info.Video.Width, info.Video.Height)
 	}
 }
 
@@ -248,7 +248,7 @@ func TestXfadeConcat_AllFade(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "xfade_all.mp4")
 	err := ff.XfadeConcat(XfadeOptions{
-		Clips: []string{clip(t, "2.mp4"), clip(t, "3.mp4")},
+		Clips: []string{clip(t, "03_autumn_road.mp4"), clip(t, "07_sea_aerial.mp4")},
 		Transitions: []Transition{
 			{Type: "slideleft", Duration: 1},
 		},
@@ -256,19 +256,20 @@ func TestXfadeConcat_AllFade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 10.37 + 58.50 - 1 ≈ 67.87
-	assertDuration(t, ff, out, 67.87, 0.1)
+	// 8.61 + 33.05 - 1 ≈ 40.66
+	assertDuration(t, ff, out, 40.66, 0.1)
 }
 
 func TestXfadeConcat_OnlyClips(t *testing.T) {
 	ff := testFF(t)
 	// 不传 Transitions：全部硬切，等价于带归一化的拼接
 	out := filepath.Join(outDir(t), "hardcut.mp4")
-	err := ff.XfadeConcat(XfadeOptions{Clips: []string{clip(t, "2.mp4"), clip(t, "3.mp4")}}, out, EncodeOptions{})
+	err := ff.XfadeConcat(XfadeOptions{Clips: []string{clip(t, "03_autumn_road.mp4"), clip(t, "07_sea_aerial.mp4")}}, out, EncodeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertDuration(t, ff, out, 68.87, 0.1)
+	// 8.61 + 33.05 ≈ 41.66
+	assertDuration(t, ff, out, 41.66, 0.1)
 }
 
 // ---------- MixAudio ----------
@@ -276,7 +277,7 @@ func TestXfadeConcat_OnlyClips(t *testing.T) {
 func TestMixAudio_MultiTrack(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "mix.mp4")
-	err := ff.MixAudio(clip(t, "1.mp4"), []MixTrack{
+	err := ff.MixAudio(clip(t, "04_waterfall.mp4"), []MixTrack{
 		{Path: clip(t, "泉水.mp3"), Volume: 0.3},
 		{Path: clip(t, "警笛.mp3"), StartAt: 2.0, Volume: 0.5},
 		{Path: clip(t, "锣.mp3"), StartAt: 4.0, Speed: 1.5, TrimIn: 0.5, TrimOut: 3, Volume: 0.6},
@@ -285,13 +286,13 @@ func TestMixAudio_MultiTrack(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out)
-	// 输出时长以视频轨为准（91.04s），音频较短应被补静音拉齐
-	assertDuration(t, ff, out, 91.04, 0.2)
+	// 输出时长以视频轨为准（33.51s），音频较短应被补静音拉齐
+	assertDuration(t, ff, out, 33.51, 0.2)
 }
 
 func TestMixAudio_NeedTracks(t *testing.T) {
 	ff := testFF(t)
-	err := ff.MixAudio(clip(t, "1.mp4"), nil, filepath.Join(outDir(t), "x.mp4"), EncodeOptions{})
+	err := ff.MixAudio(clip(t, "04_waterfall.mp4"), nil, filepath.Join(outDir(t), "x.mp4"), EncodeOptions{})
 	if err == nil {
 		t.Fatal("空音轨应报错")
 	}
@@ -301,7 +302,7 @@ func TestMixAudio_NeedTracks(t *testing.T) {
 
 func TestGenerateSpriteSheet(t *testing.T) {
 	ff := testFF(t)
-	res, err := ff.GenerateSpriteSheet(clip(t, "2.mp4"), SpriteOptions{
+	res, err := ff.GenerateSpriteSheet(clip(t, "03_autumn_road.mp4"), SpriteOptions{
 		Output:   filepath.Join(outDir(t), "sprite.jpg"),
 		FrameMax: 160,
 		SheetMax: 2048,
@@ -313,8 +314,8 @@ func TestGenerateSpriteSheet(t *testing.T) {
 	if res.FrameWidth <= 0 || res.FrameHeight <= 0 || res.Cols <= 0 || res.Rows <= 0 {
 		t.Fatalf("雪碧图布局非法: %+v", res)
 	}
-	// 2.mp4: 1280x720@30fps, 10.37s。FrameMax=160 -> 缩到 160x90；
-	// SheetMax=2048 -> 12 cols x 22 rows = 264 格，311 帧 / interval
+	// 03_autumn_road.mp4: 1920x1080@29.97fps, 8.61s。FrameMax=160 -> 等比缩到
+	// 160x90；SheetMax=2048 -> 12 cols x N rows，按帧数/interval 布局
 	if res.FrameWidth != 160 || res.FrameHeight != 90 {
 		t.Fatalf("单帧尺寸应为 160x90，实际 %dx%d", res.FrameWidth, res.FrameHeight)
 	}
@@ -330,7 +331,7 @@ func TestFrameWriter(t *testing.T) {
 	frame := filepath.Join(outDir(t), "src_frame.png")
 	wm := filepath.Join(outDir(t), "watermark.png")
 	if _, err := ff.run(ff.ffmpegBin(), []string{
-		"-i", clip(t, "2.mp4"), "-ss", "1", "-frames:v", "1", "-y", frame,
+		"-i", clip(t, "03_autumn_road.mp4"), "-ss", "1", "-frames:v", "1", "-y", frame,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +397,7 @@ func TestCheckVersion(t *testing.T) {
 func TestTranscode_ResizeAndFps(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "small.mp4")
-	err := ff.Transcode(clip(t, "2.mp4"), TranscodeOptions{
+	err := ff.Transcode(clip(t, "03_autumn_road.mp4"), TranscodeOptions{
 		Width: 640, Fps: 24, CRF: 28, TrimEnd: 3,
 	}, out)
 	if err != nil {
@@ -421,7 +422,7 @@ func TestTranscode_ResizeAndFps(t *testing.T) {
 func TestTranscode_ToWebm(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "out.webm")
-	err := ff.Transcode(clip(t, "2.mp4"), TranscodeOptions{TrimEnd: 2, VideoBitrate: "500k"}, out)
+	err := ff.Transcode(clip(t, "03_autumn_road.mp4"), TranscodeOptions{TrimEnd: 2, VideoBitrate: "500k"}, out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,11 +439,11 @@ func TestTranscode_ToWebm(t *testing.T) {
 func TestRemux(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "remux.mkv")
-	if err := ff.Remux(clip(t, "2.mp4"), out); err != nil {
+	if err := ff.Remux(clip(t, "03_autumn_road.mp4"), out); err != nil {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out)
-	assertDuration(t, ff, out, 10.37, 0.2)
+	assertDuration(t, ff, out, 8.61, 0.2)
 }
 
 // ---------- Trim / Mute / ReplaceAudio / Speed ----------
@@ -450,7 +451,7 @@ func TestRemux(t *testing.T) {
 func TestTrim(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "trim.mp4")
-	if err := ff.Trim(clip(t, "3.mp4"), 10, 15.5, out); err != nil {
+	if err := ff.Trim(clip(t, "07_sea_aerial.mp4"), 10, 15.5, out); err != nil {
 		t.Fatal(err)
 	}
 	// 帧精确重编码：起点/终点都不再有关键帧对齐偏移
@@ -460,7 +461,7 @@ func TestTrim(t *testing.T) {
 func TestMute(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "mute.mp4")
-	if err := ff.Mute(clip(t, "2.mp4"), out); err != nil {
+	if err := ff.Mute(clip(t, "03_autumn_road.mp4"), out); err != nil {
 		t.Fatal(err)
 	}
 	info, err := ff.Probe(out)
@@ -475,29 +476,29 @@ func TestMute(t *testing.T) {
 func TestReplaceAudio(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "replaced.mp4")
-	if err := ff.ReplaceAudio(clip(t, "2.mp4"), clip(t, "咳嗽.mp3"), true, out, EncodeOptions{}); err != nil {
+	if err := ff.ReplaceAudio(clip(t, "03_autumn_road.mp4"), clip(t, "咳嗽.mp3"), true, out, EncodeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out)
-	assertDuration(t, ff, out, 10.37, 0.3)
+	assertDuration(t, ff, out, 8.61, 0.3)
 
 	// 非循环：配乐短于视频时静音填充到视频结尾（曾用 -shortest 把成片
-	// 截到配乐长度：10.4s 视频 × 8s 配乐 → 8s 成片）
+	// 截到配乐长度：8.6s 视频 × 8s 配乐 → 8s 成片）
 	out2 := filepath.Join(outDir(t), "replaced_noloop.mp4")
-	if err := ff.ReplaceAudio(clip(t, "2.mp4"), clip(t, "泉水.mp3"), false, out2, EncodeOptions{}); err != nil {
+	if err := ff.ReplaceAudio(clip(t, "03_autumn_road.mp4"), clip(t, "泉水.mp3"), false, out2, EncodeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	assertDuration(t, ff, out2, 10.37, 0.3)
+	assertDuration(t, ff, out2, 8.61, 0.3)
 }
 
 func TestSpeed(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "speed2x.mp4")
-	if err := ff.Speed(clip(t, "2.mp4"), 2.0, out, EncodeOptions{}); err != nil {
+	if err := ff.Speed(clip(t, "03_autumn_road.mp4"), 2.0, out, EncodeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	// 10.37 / 2 ≈ 5.19
-	assertDuration(t, ff, out, 5.19, 0.2)
+	// 8.61 / 2 ≈ 4.31
+	assertDuration(t, ff, out, 4.31, 0.2)
 }
 
 // ---------- ToGIF ----------
@@ -505,7 +506,7 @@ func TestSpeed(t *testing.T) {
 func TestToGIF(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "clip.gif")
-	if err := ff.ToGIF(clip(t, "2.mp4"), 1, 3, 320, 10, out); err != nil {
+	if err := ff.ToGIF(clip(t, "03_autumn_road.mp4"), 1, 3, 320, 10, out); err != nil {
 		t.Fatal(err)
 	}
 	assertFileExists(t, out)
@@ -527,7 +528,7 @@ func TestToGIF(t *testing.T) {
 func shortClip(t *testing.T, ff *FFmpeg) string {
 	t.Helper()
 	out := filepath.Join(outDir(t), "src3s.mp4")
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "3", "-y", out}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "03_autumn_road.mp4"), "-t", "3", "-y", out}); err != nil {
 		t.Fatal(err)
 	}
 	return out
@@ -560,9 +561,9 @@ func TestRotate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 1280x720 旋转 90° 后应变为 720x1280
-	if info.Video.Width != 720 || info.Video.Height != 1280 {
-		t.Fatalf("旋转后应为 720x1280，实际 %dx%d", info.Video.Width, info.Video.Height)
+	// 1920x1080 旋转 90° 后应变为 1080x1920
+	if info.Video.Width != 1080 || info.Video.Height != 1920 {
+		t.Fatalf("旋转后应为 1080x1920，实际 %dx%d", info.Video.Width, info.Video.Height)
 	}
 	if err := ff.Rotate(src, "bad", filepath.Join(outDir(t), "x.mp4"), EncodeOptions{}); err == nil {
 		t.Fatal("未知旋转类型应报错")
@@ -712,7 +713,7 @@ func TestTranscodeProgress(t *testing.T) {
 	var got Progress
 	var calls int
 	out := filepath.Join(outDir(t), "prog.mp4")
-	err := ff.Transcode(clip(t, "2.mp4"), TranscodeOptions{
+	err := ff.Transcode(clip(t, "03_autumn_road.mp4"), TranscodeOptions{
 		TrimEnd: 2,
 		OnProgress: func(p Progress) error {
 			calls++
@@ -738,7 +739,7 @@ func TestComposeGrid_2x1(t *testing.T) {
 	ff := testFF(t)
 	a := filepath.Join(outDir(t), "a3s.mp4")
 	b := filepath.Join(outDir(t), "b2s.mp4")
-	for i, src := range []string{clip(t, "2.mp4"), clip(t, "3.mp4")} {
+	for i, src := range []string{clip(t, "03_autumn_road.mp4"), clip(t, "07_sea_aerial.mp4")} {
 		d := []string{a, b}[i]
 		if _, err := ff.run(ff.ffmpegBin(), []string{"-i", src, "-t", []string{"3", "2"}[i], "-y", d}); err != nil {
 			t.Fatal(err)
@@ -752,9 +753,10 @@ func TestComposeGrid_2x1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 格子取最大宽高 1280x974，2 列并排 -> 2560x974；时长以最长的 3s 为准
-	if info.Video.Width != 2560 || info.Video.Height != 974 {
-		t.Fatalf("分屏应为 2560x974，实际 %dx%d", info.Video.Width, info.Video.Height)
+	// 格子取最大宽高（03: 1920x1080、07: 1280x720 -> 1920x1080），
+	// 2 列并排 -> 3840x1080；时长以最长的 3s 为准
+	if info.Video.Width != 3840 || info.Video.Height != 1080 {
+		t.Fatalf("分屏应为 3840x1080，实际 %dx%d", info.Video.Width, info.Video.Height)
 	}
 	if info.Duration < 2.5 || info.Duration > 3.5 {
 		t.Fatalf("分屏时长应约 3s，实际 %.2f", info.Duration)
@@ -770,7 +772,7 @@ func TestComposeGrid_PadBlack(t *testing.T) {
 	ff := testFF(t)
 	// 2x2 网格只给 3 个输入，右下角应为黑块
 	src := filepath.Join(outDir(t), "s2s.mp4")
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "2", "-y", src}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "03_autumn_road.mp4"), "-t", "2", "-y", src}); err != nil {
 		t.Fatal(err)
 	}
 	out := filepath.Join(outDir(t), "grid4.mp4")
@@ -781,8 +783,8 @@ func TestComposeGrid_PadBlack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Video.Width != 2560 || info.Video.Height != 1440 {
-		t.Fatalf("四宫格应为 2560x1440，实际 %dx%d", info.Video.Width, info.Video.Height)
+	if info.Video.Width != 3840 || info.Video.Height != 2160 {
+		t.Fatalf("四宫格应为 3840x2160，实际 %dx%d", info.Video.Width, info.Video.Height)
 	}
 }
 
@@ -791,7 +793,7 @@ func TestSplitScreen(t *testing.T) {
 	a := filepath.Join(outDir(t), "a2s.mp4")
 	b := filepath.Join(outDir(t), "b2s2.mp4")
 	for i, d := range []string{a, b} {
-		if _, err := ff.run(ff.ffmpegBin(), []string{"-i", []string{clip(t, "2.mp4"), clip(t, "3.mp4")}[i], "-t", "2", "-y", d}); err != nil {
+		if _, err := ff.run(ff.ffmpegBin(), []string{"-i", []string{clip(t, "03_autumn_road.mp4"), clip(t, "07_sea_aerial.mp4")}[i], "-t", "2", "-y", d}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -803,8 +805,9 @@ func TestSplitScreen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Video.Width != 1280 || info.Video.Height != 1948 {
-		t.Fatalf("上下分屏应为 1280x1948，实际 %dx%d", info.Video.Width, info.Video.Height)
+	// 上下分屏：格子取最大宽高 1920x1080 -> 1920x2160
+	if info.Video.Width != 1920 || info.Video.Height != 2160 {
+		t.Fatalf("上下分屏应为 1920x2160，实际 %dx%d", info.Video.Width, info.Video.Height)
 	}
 }
 
@@ -812,10 +815,10 @@ func TestPictureInPicture(t *testing.T) {
 	ff := testFF(t)
 	main := filepath.Join(outDir(t), "main3s.mp4")
 	pip := filepath.Join(outDir(t), "pip1s.mp4")
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "3", "-y", main}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "03_autumn_road.mp4"), "-t", "3", "-y", main}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "3.mp4"), "-t", "1", "-y", pip}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "07_sea_aerial.mp4"), "-t", "1", "-y", pip}); err != nil {
 		t.Fatal(err)
 	}
 	out := filepath.Join(outDir(t), "pip.mp4")
@@ -832,8 +835,8 @@ func TestPictureInPicture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Video.Width != 1280 {
-		t.Fatalf("画中画输出宽度应保持 1280，实际 %d", info.Video.Width)
+	if info.Video.Width != 1920 {
+		t.Fatalf("画中画输出宽度应保持 1920，实际 %d", info.Video.Width)
 	}
 }
 
@@ -855,7 +858,7 @@ func TestTranscodeCommand(t *testing.T) {
 func TestApplyVideoFilters_Combo(t *testing.T) {
 	ff := testFF(t)
 	src := filepath.Join(outDir(t), "fx_src.mp4")
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "2", "-y", src}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "03_autumn_road.mp4"), "-t", "2", "-y", src}); err != nil {
 		t.Fatal(err)
 	}
 	// 水印图 + 字幕
@@ -891,7 +894,7 @@ func TestApplyVideoFilters_Combo(t *testing.T) {
 func TestApplyVideoFilters_CropThenRotate(t *testing.T) {
 	ff := testFF(t)
 	src := filepath.Join(outDir(t), "fx_src2.mp4")
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "1", "-y", src}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "03_autumn_road.mp4"), "-t", "1", "-y", src}); err != nil {
 		t.Fatal(err)
 	}
 	// 裁剪坐标固定按原始画面（1280x720）定义：裁左上 720x640，再右转 90°
@@ -918,7 +921,7 @@ func TestApplyVideoFilters_None(t *testing.T) {
 	ff := testFF(t)
 	// 空链 = 纯重编码，应正常工作
 	out := filepath.Join(outDir(t), "fx_none.mp4")
-	err := ff.ApplyVideoFilters(clip(t, "2.mp4"), VideoFilterChain{}, out, EncodeOptions{})
+	err := ff.ApplyVideoFilters(clip(t, "03_autumn_road.mp4"), VideoFilterChain{}, out, EncodeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -939,7 +942,7 @@ func TestApplyVideoFilters_WatermarkAlone(t *testing.T) {
 		rot     Rotation
 	}{{"alone_opaque", 1, ""}, {"alone_semi", 0.5, ""}, {"rot_opaque", 1, Rot90CW}} {
 		out := filepath.Join(outDir(t), "wm_"+tc.name+".mp4")
-		err := ff.ApplyVideoFilters(clip(t, "2.mp4"), VideoFilterChain{
+		err := ff.ApplyVideoFilters(clip(t, "03_autumn_road.mp4"), VideoFilterChain{
 			Watermark: &Watermark{Path: wm, Position: PosTopLeft, Opacity: tc.opacity},
 			Rotate:    tc.rot,
 		}, out, EncodeOptions{})
@@ -952,8 +955,8 @@ func TestApplyVideoFilters_WatermarkAlone(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if info.Video.Width != 720 || info.Video.Height != 1280 {
-				t.Fatalf("%s 旋转后应 720x1280，实际 %dx%d", tc.name, info.Video.Width, info.Video.Height)
+			if info.Video.Width != 1080 || info.Video.Height != 1920 {
+				t.Fatalf("%s 旋转后应 1080x1920，实际 %dx%d", tc.name, info.Video.Width, info.Video.Height)
 			}
 		}
 	}
@@ -964,8 +967,8 @@ func TestExtractFrames_AllFrames(t *testing.T) {
 	dir := filepath.Join(outDir(t), "seq_all")
 	os.MkdirAll(dir, 0o755)
 	pattern := filepath.Join(dir, "frame_%04d.jpg")
-	// 2.mp4 30fps，取 [1,2) 全量帧 ≈ 30 张
-	n, err := ff.ExtractFrames(clip(t, "2.mp4"), 1, 2, 0, pattern)
+	// 03_autumn_road.mp4 29.97fps，取 [1,2) 全量帧 ≈ 30 张
+	n, err := ff.ExtractFrames(clip(t, "03_autumn_road.mp4"), 1, 2, 0, pattern)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -982,17 +985,17 @@ func TestExtractFrames_Sampled(t *testing.T) {
 	os.MkdirAll(dir, 0o755)
 	pattern := filepath.Join(dir, "f_%03d.png")
 	// [0,3) 每秒 1 帧 → 3 张
-	n, err := ff.ExtractFrames(clip(t, "2.mp4"), 0, 3, 1, pattern)
+	n, err := ff.ExtractFrames(clip(t, "03_autumn_road.mp4"), 0, 3, 1, pattern)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n < 3 || n > 4 {
 		t.Fatalf("每秒 1 帧取 3s 应约 3 张，实际 %d", n)
 	}
-	if _, err := ff.ExtractFrames(clip(t, "2.mp4"), 2, 1, 0, pattern); err == nil {
+	if _, err := ff.ExtractFrames(clip(t, "03_autumn_road.mp4"), 2, 1, 0, pattern); err == nil {
 		t.Fatal("起止倒置应报错")
 	}
-	if _, err := ff.ExtractFrames(clip(t, "2.mp4"), 0, 1, 0, "no_seq.jpg"); err == nil {
+	if _, err := ff.ExtractFrames(clip(t, "03_autumn_road.mp4"), 0, 1, 0, "no_seq.jpg"); err == nil {
 		t.Fatal("缺序号占位应报错")
 	}
 }
@@ -1072,7 +1075,7 @@ func assertRegionPainted(t *testing.T, ff *FFmpeg, path string, at, fx, fy float
 func TestWatermarkTile(t *testing.T) {
 	ff := testFF(t)
 	src := filepath.Join(outDir(t), "tile_src.mp4")
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "2", "-y", src}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "03_autumn_road.mp4"), "-t", "2", "-y", src}); err != nil {
 		t.Fatal(err)
 	}
 	wm := filepath.Join(outDir(t), "tile_wm.png")
@@ -1130,7 +1133,7 @@ func TestWatermarkTile(t *testing.T) {
 func TestWatermarkTileGap(t *testing.T) {
 	ff := testFF(t)
 	src := filepath.Join(outDir(t), "gap_src.mp4")
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "2", "-y", src}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "03_autumn_road.mp4"), "-t", "2", "-y", src}); err != nil {
 		t.Fatal(err)
 	}
 	wm := filepath.Join(outDir(t), "gap_wm.png")
@@ -1156,7 +1159,7 @@ func TestWatermarkTileGap(t *testing.T) {
 // 回退（静默回退曾掩盖 PosTile"值存在但没接线"的问题）。
 func TestEnumValidation(t *testing.T) {
 	ff := testFF(t)
-	src := clip(t, "2.mp4")
+	src := clip(t, "03_autumn_road.mp4")
 	wm := filepath.Join(outDir(t), "enum_wm.png")
 	if _, err := ff.run(ff.ffmpegBin(), []string{"-f", "lavfi", "-i", "color=blue:s=80x40", "-frames:v", "1", "-y", wm}); err != nil {
 		t.Fatal(err)
@@ -1202,7 +1205,7 @@ func TestToGIFDither(t *testing.T) {
 	ff := testFF(t)
 	for _, d := range []Dither{DitherNone, DitherFS} {
 		out := filepath.Join(outDir(t), "gif_"+string(d)+".gif")
-		if err := ff.ToGIFWith(clip(t, "2.mp4"), 0, 1, GIFOptions{Width: 320, Dither: d}, out); err != nil {
+		if err := ff.ToGIFWith(clip(t, "03_autumn_road.mp4"), 0, 1, GIFOptions{Width: 320, Dither: d}, out); err != nil {
 			t.Fatalf("%s: %v", d, err)
 		}
 		assertFileExists(t, out)
@@ -1230,12 +1233,12 @@ func TestXfadeConcatMixedAudio(t *testing.T) {
 	// 去音片段参与拼接必须补静音轨而不是失败
 	ff := testFF(t)
 	mute := filepath.Join(outDir(t), "mixmute.mp4")
-	if err := ff.Mute(clip(t, "2.mp4"), mute); err != nil {
+	if err := ff.Mute(clip(t, "03_autumn_road.mp4"), mute); err != nil {
 		t.Fatal(err)
 	}
 	out := filepath.Join(outDir(t), "mix_concat.mp4")
 	err := ff.XfadeConcat(XfadeOptions{
-		Clips:       []string{clip(t, "2.mp4"), mute},
+		Clips:       []string{clip(t, "03_autumn_road.mp4"), mute},
 		Transitions: []Transition{{Type: Fade, Duration: 0.5}},
 	}, out, EncodeOptions{})
 	if err != nil {
@@ -1248,8 +1251,8 @@ func TestXfadeConcatMixedAudio(t *testing.T) {
 	if !info.HasAudio {
 		t.Fatal("补静音后成片应有音轨")
 	}
-	// 10.37 + 10.37 - 0.5 ≈ 20.24
-	assertDuration(t, ff, out, 20.24, 0.3)
+	// 8.61 + 8.61 - 0.5 ≈ 16.72
+	assertDuration(t, ff, out, 16.72, 0.3)
 }
 
 // ---------- 帧序列降采样 / 音量探测 / 合成声音选择 ----------
@@ -1262,15 +1265,15 @@ func TestExtractFrames_EveryN(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	full, err := ff.ExtractFrames(clip(t, "1.mp4"), 0, 0, 0, filepath.Join(dir, "full", "f_%04d.jpg"))
+	full, err := ff.ExtractFrames(clip(t, "04_waterfall.mp4"), 0, 0, 0, filepath.Join(dir, "full", "f_%04d.jpg"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	half, err := ff.ExtractFramesEveryN(clip(t, "1.mp4"), 0, 0, 2, filepath.Join(dir, "half", "f_%04d.jpg"))
+	half, err := ff.ExtractFramesEveryN(clip(t, "04_waterfall.mp4"), 0, 0, 2, filepath.Join(dir, "half", "f_%04d.jpg"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	quarter, err := ff.ExtractFramesEveryN(clip(t, "1.mp4"), 0, 0, 4, filepath.Join(dir, "quarter", "f_%04d.jpg"))
+	quarter, err := ff.ExtractFramesEveryN(clip(t, "04_waterfall.mp4"), 0, 0, 4, filepath.Join(dir, "quarter", "f_%04d.jpg"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1298,7 +1301,7 @@ func TestExtractFrames_BracketDir(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	n, err := ff.ExtractFrames(clip(t, "2.mp4"), 1, 2, 0, filepath.Join(dir, "frame_%04d.jpg"))
+	n, err := ff.ExtractFrames(clip(t, "03_autumn_road.mp4"), 1, 2, 0, filepath.Join(dir, "frame_%04d.jpg"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1308,7 +1311,7 @@ func TestExtractFrames_BracketDir(t *testing.T) {
 	assertFileExists(t, filepath.Join(dir, "frame_0001.jpg"))
 
 	// 降采样分支走的是另一个入口，同样要过括号目录
-	nd, err := ff.ExtractFramesEveryN(clip(t, "2.mp4"), 1, 2, 2, filepath.Join(dir, "half_%04d.jpg"))
+	nd, err := ff.ExtractFramesEveryN(clip(t, "03_autumn_road.mp4"), 1, 2, 2, filepath.Join(dir, "half_%04d.jpg"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1319,7 +1322,9 @@ func TestExtractFrames_BracketDir(t *testing.T) {
 
 func TestDetectVolume(t *testing.T) {
 	ff := testFF(t)
-	vs, err := ff.DetectVolume(clip(t, "1.mp4"))
+	// 新素材批次的视频音轨多为数字无声（-91dB），音量探测用 05
+	// （有实际环境声，mean ≈ -54dB）
+	vs, err := ff.DetectVolume(clip(t, "05_boardwalk_vertical.mp4"))
 	if err != nil {
 		t.Fatalf("音量探测失败: %v", err)
 	}
@@ -1332,7 +1337,7 @@ func TestDetectVolume(t *testing.T) {
 	}
 	// 无音轨文件应报错而不是给出假数据
 	mute := filepath.Join(outDir(t), "mute.mp4")
-	if err := ff.Mute(clip(t, "1.mp4"), mute); err != nil {
+	if err := ff.Mute(clip(t, "05_boardwalk_vertical.mp4"), mute); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ff.DetectVolume(mute); err == nil {
@@ -1343,7 +1348,7 @@ func TestDetectVolume(t *testing.T) {
 func TestComposeGrid_MultiAudio(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "grid2audio.mp4")
-	err := ff.ComposeGridAudio([]string{clip(t, "1.mp4"), clip(t, "2.mp4")}, 2, 1,
+	err := ff.ComposeGridAudio([]string{clip(t, "04_waterfall.mp4"), clip(t, "03_autumn_road.mp4")}, 2, 1,
 		[]GridAudio{{Index: 0}, {Index: 1, Volume: 0.5}}, out, EncodeOptions{})
 	if err != nil {
 		t.Fatalf("多音轨宫格应成功: %v", err)
@@ -1363,7 +1368,7 @@ func TestComposeGrid_MultiAudio(t *testing.T) {
 func TestComposeGrid_NoAudioKept(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "grid_noaudio.mp4")
-	err := ff.ComposeGridAudio([]string{clip(t, "1.mp4"), clip(t, "2.mp4")}, 2, 1,
+	err := ff.ComposeGridAudio([]string{clip(t, "04_waterfall.mp4"), clip(t, "03_autumn_road.mp4")}, 2, 1,
 		nil, out, EncodeOptions{})
 	if err != nil {
 		t.Fatalf("不保留声音的宫格应成功: %v", err)
@@ -1382,7 +1387,7 @@ func TestXfadeConcat_AudioSelect(t *testing.T) {
 	out := filepath.Join(outDir(t), "concat_sel.mp4")
 	// 只保留第二段声音且降为 0.5 倍；第一段补静音
 	err := ff.XfadeConcat(XfadeOptions{
-		Clips: []string{clip(t, "1.mp4"), clip(t, "2.mp4")},
+		Clips: []string{clip(t, "04_waterfall.mp4"), clip(t, "03_autumn_road.mp4")},
 		Audio: []AudioPick{{Index: 1, Volume: 0.5}},
 	}, out, EncodeOptions{})
 	if err != nil {
@@ -1405,7 +1410,7 @@ func TestMixBackground(t *testing.T) {
 	dir := outDir(t)
 	// 有原声视频 + 短音乐循环铺满，原声 0.5 倍、配乐 1 倍
 	out := filepath.Join(dir, "mixbgm.mp4")
-	err := ff.MixBackground(clip(t, "2.mp4"), clip(t, "锣.mp3"), 0.5, 1, true, out, EncodeOptions{})
+	err := ff.MixBackground(clip(t, "03_autumn_road.mp4"), clip(t, "锣.mp3"), 0.5, 1, true, out, EncodeOptions{})
 	if err != nil {
 		t.Fatalf("背景音乐混入应成功: %v", err)
 	}
@@ -1417,12 +1422,12 @@ func TestMixBackground(t *testing.T) {
 	if !info.HasAudio {
 		t.Fatal("混入后应有音轨")
 	}
-	// 时长以视频为准（2.mp4 ≈ 10.37s，锣.mp3 很短靠循环铺满）
-	assertDuration(t, ff, out, 10.37, 0.5)
+	// 时长以视频为准（03_autumn_road.mp4 ≈ 8.61s，锣.mp3 很短靠循环铺满）
+	assertDuration(t, ff, out, 8.61, 0.5)
 
 	// 无原声视频 + 配乐（等价纯配乐，验证无原声分支）
 	mute := filepath.Join(dir, "mute.mp4")
-	if err := ff.Mute(clip(t, "2.mp4"), mute); err != nil {
+	if err := ff.Mute(clip(t, "03_autumn_road.mp4"), mute); err != nil {
 		t.Fatal(err)
 	}
 	out2 := filepath.Join(dir, "mutebgm.mp4")
@@ -1443,14 +1448,14 @@ func TestExtractAudioRange(t *testing.T) {
 	dir := outDir(t)
 	out := filepath.Join(dir, "cut.mp3")
 	// 抽取 2~4.5 秒的音频段
-	if err := ff.ExtractAudio(clip(t, "2.mp4"), AudioExtractOptions{Start: 2, End: 4.5}, out); err != nil {
+	if err := ff.ExtractAudio(clip(t, "03_autumn_road.mp4"), AudioExtractOptions{Start: 2, End: 4.5}, out); err != nil {
 		t.Fatalf("时间段音频抽取应成功: %v", err)
 	}
 	assertFileExists(t, out)
 	assertDuration(t, ff, out, 2.5, 0.3)
 	// wav 格式 + 全长（零值回退原行为）
 	out2 := filepath.Join(dir, "full.wav")
-	if err := ff.ExtractAudio(clip(t, "2.mp4"), AudioExtractOptions{}, out2); err != nil {
+	if err := ff.ExtractAudio(clip(t, "03_autumn_road.mp4"), AudioExtractOptions{}, out2); err != nil {
 		t.Fatalf("全长音频抽取应成功: %v", err)
 	}
 	info, err := ff.Probe(out2)
@@ -1468,12 +1473,12 @@ func TestMultiCompose_SequentialPreprocess(t *testing.T) {
 	ff := testFF(t)
 	dir := outDir(t)
 	out := filepath.Join(dir, "mc_seq.mp4")
-	// A：2.mp4(10.37s) 取前 3s 变速 2x → 1.5s；B：3.mp4 取前 2s；
-	// fade 0.5s → 总时长 1.5+2-0.5=3.0s；输出归一到最大宽高 1280x974
+	// A：03_autumn_road.mp4 取前 3s 变速 2x → 1.5s；B：07_sea_aerial.mp4 取前 2s；
+	// fade 0.5s → 总时长 1.5+2-0.5=3.0s；输出归一到最大宽高 1920x1080
 	err := ff.MultiCompose(MultiComposeOptions{
 		Clips: []ClipSpec{
-			{Path: clip(t, "2.mp4"), TrimEnd: 3, Speed: 2, Volume: 0.5},
-			{Path: clip(t, "3.mp4"), TrimEnd: 2},
+			{Path: clip(t, "03_autumn_road.mp4"), TrimEnd: 3, Speed: 2, Volume: 0.5},
+			{Path: clip(t, "07_sea_aerial.mp4"), TrimEnd: 2},
 		},
 		Transitions: []Transition{{Type: Fade, Duration: 0.5}},
 	}, out)
@@ -1485,8 +1490,8 @@ func TestMultiCompose_SequentialPreprocess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Video.Width != 1280 || info.Video.Height != 974 {
-		t.Fatalf("输出应归一到 1280x974: %dx%d", info.Video.Width, info.Video.Height)
+	if info.Video.Width != 1920 || info.Video.Height != 1080 {
+		t.Fatalf("输出应归一到 1920x1080: %dx%d", info.Video.Width, info.Video.Height)
 	}
 	assertDuration(t, ff, out, 3.0, 0.4)
 	if !info.HasAudio {
@@ -1498,16 +1503,16 @@ func TestMultiCompose_GridOverlay(t *testing.T) {
 	ff := testFF(t)
 	dir := outDir(t)
 	out := filepath.Join(dir, "mc_grid.mp4")
-	// 分屏 2x1：A 静音、B 保留；之上叠一个小窗（2.mp4 前 1s，320x180，
+	// 分屏 2x1：A 静音、B 保留；之上叠一个小窗（03_autumn 前 1s，320x180，
 	// 半透明）——覆盖 grid+mute+overlay 组合路径
 	err := ff.MultiCompose(MultiComposeOptions{
 		Layout: LayoutGrid, Cols: 2, Rows: 1,
 		Clips: []ClipSpec{
-			{Path: clip(t, "2.mp4"), Mute: true},
-			{Path: clip(t, "3.mp4")},
+			{Path: clip(t, "03_autumn_road.mp4"), Mute: true},
+			{Path: clip(t, "07_sea_aerial.mp4")},
 		},
 		Overlays: []OverlayLayer{
-			{Clip: ClipSpec{Path: clip(t, "2.mp4"), TrimEnd: 1},
+			{Clip: ClipSpec{Path: clip(t, "03_autumn_road.mp4"), TrimEnd: 1},
 				X: 50, Y: 50, W: 320, H: 180, Opacity: 0.5},
 		},
 	}, out)
@@ -1519,9 +1524,9 @@ func TestMultiCompose_GridOverlay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 格子=1280x974，2 列 → 2560x974
-	if info.Video.Width != 2560 || info.Video.Height != 974 {
-		t.Fatalf("分屏输出应为 2560x974: %dx%d", info.Video.Width, info.Video.Height)
+	// 格子=最大宽高 1920x1080，2 列 → 3840x1080
+	if info.Video.Width != 3840 || info.Video.Height != 1080 {
+		t.Fatalf("分屏输出应为 3840x1080: %dx%d", info.Video.Width, info.Video.Height)
 	}
 	if !info.HasAudio {
 		t.Fatal("第二路保留声音，成片应有音轨")
@@ -1532,9 +1537,9 @@ func TestMultiCompose_BGMLoopOnly(t *testing.T) {
 	ff := testFF(t)
 	dir := outDir(t)
 	out := filepath.Join(dir, "mc_bgm.mp4")
-	// 全静音 + 循环配乐：时长以视频为准（2.mp4 ≈ 10.37s）
+	// 全静音 + 循环配乐：时长以视频为准（03_autumn_road.mp4 ≈ 8.61s）
 	err := ff.MultiCompose(MultiComposeOptions{
-		Clips: []ClipSpec{{Path: clip(t, "2.mp4"), Mute: true}},
+		Clips: []ClipSpec{{Path: clip(t, "03_autumn_road.mp4"), Mute: true}},
 		Audio: AudioSpec{Keep: []AudioPick{}, BGMPath: clip(t, "锣.mp3"), BGMLoop: true, BGMVolume: 0.6},
 	}, out)
 	if err != nil {
@@ -1548,7 +1553,7 @@ func TestMultiCompose_BGMLoopOnly(t *testing.T) {
 	if !info.HasAudio {
 		t.Fatal("应有配乐音轨")
 	}
-	assertDuration(t, ff, out, 10.37, 0.5)
+	assertDuration(t, ff, out, 8.61, 0.5)
 }
 
 func TestMultiCompose_ReverseCropRotate(t *testing.T) {
@@ -1558,7 +1563,7 @@ func TestMultiCompose_ReverseCropRotate(t *testing.T) {
 	// 单输入预处理组合：trim 前 2s → 裁 300x400 → 旋转 90° → 倒放
 	err := ff.MultiCompose(MultiComposeOptions{
 		Clips: []ClipSpec{{
-			Path:    clip(t, "3.mp4"),
+			Path:    clip(t, "07_sea_aerial.mp4"),
 			TrimEnd: 2,
 			Crop:    &CropRect{W: 300, H: 400},
 			Rotate:  Rot90CW,
@@ -1802,7 +1807,7 @@ func TestApplyVideoFilters_RotateThenFit(t *testing.T) {
 func TestApplyVideoFilters_FitRejectsBadCanvas(t *testing.T) {
 	ff := testFF(t)
 	out := filepath.Join(outDir(t), "bad.mp4")
-	err := ff.ApplyVideoFilters(clip(t, "2.mp4"), VideoFilterChain{
+	err := ff.ApplyVideoFilters(clip(t, "03_autumn_road.mp4"), VideoFilterChain{
 		Fit: &FitOptions{Width: 0, Height: 1080},
 	}, out, EncodeOptions{})
 	if err == nil {
@@ -1981,37 +1986,37 @@ func TestLegacyCompat(t *testing.T) {
 	// 1) 旧版 amix 等价路径：混入配乐（两路预乘 2）
 	ff.setVersionForTest(4, 2)
 	out := filepath.Join(dir, "legacy_bgm.mp4")
-	if err := ff.MixBackground(clip(t, "2.mp4"), clip(t, "锣.mp3"), 0.5, 0.8, true, out, EncodeOptions{}); err != nil {
+	if err := ff.MixBackground(clip(t, "03_autumn_road.mp4"), clip(t, "锣.mp3"), 0.5, 0.8, true, out, EncodeOptions{}); err != nil {
 		t.Fatalf("旧版混音路径应成功: %v", err)
 	}
 	assertFileExists(t, out)
-	assertDuration(t, ff, out, 10.37, 0.5)
+	assertDuration(t, ff, out, 8.61, 0.5)
 
 	// 2) 旧版多轨混音：MixAudio（含原声共 2 路，各预乘 2）
 	out2 := filepath.Join(dir, "legacy_mix.mp4")
-	err := ff.MixAudio(clip(t, "2.mp4"), []MixTrack{{Path: clip(t, "锣.mp3"), Volume: 0.5}}, out2, EncodeOptions{})
+	err := ff.MixAudio(clip(t, "03_autumn_road.mp4"), []MixTrack{{Path: clip(t, "锣.mp3"), Volume: 0.5}}, out2, EncodeOptions{})
 	if err != nil {
 		t.Fatalf("旧版多轨混音应成功: %v", err)
 	}
-	assertDuration(t, ff, out2, 10.37, 0.5)
+	assertDuration(t, ff, out2, 8.61, 0.5)
 
 	// 3) 旧版宫格多音轨
 	out3 := filepath.Join(dir, "legacy_grid.mp4")
-	if err := ff.ComposeGridAudio([]string{clip(t, "1.mp4"), clip(t, "2.mp4")}, 2, 1,
+	if err := ff.ComposeGridAudio([]string{clip(t, "04_waterfall.mp4"), clip(t, "03_autumn_road.mp4")}, 2, 1,
 		[]GridAudio{{Index: 0}, {Index: 1, Volume: 0.5}}, out3, EncodeOptions{}); err != nil {
 		t.Fatalf("旧版宫格混音应成功: %v", err)
 	}
 
-	// 4) 旧版 xfade 降级：转场退化为硬切，时长=两段之和（2.mp4x2）
+	// 4) 旧版 xfade 降级：转场退化为硬切，时长=两段之和（03_autumn x2）
 	out4 := filepath.Join(dir, "legacy_concat.mp4")
 	err = ff.XfadeConcat(XfadeOptions{
-		Clips:       []string{clip(t, "2.mp4"), clip(t, "2.mp4")},
+		Clips:       []string{clip(t, "03_autumn_road.mp4"), clip(t, "03_autumn_road.mp4")},
 		Transitions: []Transition{{Type: Fade, Duration: 0.5}},
 	}, out4, EncodeOptions{})
 	if err != nil {
 		t.Fatalf("旧版拼接（降级硬切）应成功: %v", err)
 	}
-	assertDuration(t, ff, out4, 10.37*2, 0.5)
+	assertDuration(t, ff, out4, 8.61*2, 0.5)
 }
 
 func TestPiPMainOutlivesPip(t *testing.T) {
@@ -2019,7 +2024,7 @@ func TestPiPMainOutlivesPip(t *testing.T) {
 	dir := outDir(t)
 	// 小窗比主画面短：主画面继续播（hold 定格 / hide 消失），不随小窗停止
 	pip := filepath.Join(dir, "short.mp4")
-	if err := ff.Transcode(clip(t, "2.mp4"), TranscodeOptions{TrimEnd: 2}, pip); err != nil {
+	if err := ff.Transcode(clip(t, "03_autumn_road.mp4"), TranscodeOptions{TrimEnd: 2}, pip); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -2028,11 +2033,11 @@ func TestPiPMainOutlivesPip(t *testing.T) {
 	}{{"hold", PiPOptions{Scale: 0.25, PipEnd: PipEndHold}},
 		{"hide", PiPOptions{Scale: 0.25, PipEnd: PipEndHide}}} {
 		out := filepath.Join(dir, "pip_"+tc.name+".mp4")
-		if err := ff.PictureInPicture(clip(t, "2.mp4"), pip, tc.opt, out, EncodeOptions{}); err != nil {
+		if err := ff.PictureInPicture(clip(t, "03_autumn_road.mp4"), pip, tc.opt, out, EncodeOptions{}); err != nil {
 			t.Fatalf("%s 应成功: %v", tc.name, err)
 		}
-		// 输出时长以主画面为准（2.mp4 ≈ 10.37s），而非小窗的 2s
-		assertDuration(t, ff, out, 10.37, 0.5)
+		// 输出时长以主画面为准（03_autumn_road.mp4 ≈ 8.61s），而非小窗的 2s
+		assertDuration(t, ff, out, 8.61, 0.5)
 	}
 }
 
@@ -2042,10 +2047,10 @@ func TestPiPMixAudio(t *testing.T) {
 	// 主画面 3s 有声 + 小窗 1s 有声：混合后保留音轨，时长仍以主画面为准
 	main := filepath.Join(dir, "mixmain3s.mp4")
 	pip := filepath.Join(dir, "mixpip1s.mp4")
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "3", "-y", main}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "03_autumn_road.mp4"), "-t", "3", "-y", main}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "3.mp4"), "-t", "1", "-y", pip}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "07_sea_aerial.mp4"), "-t", "1", "-y", pip}); err != nil {
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "pip_mix.mp4")
@@ -2070,10 +2075,10 @@ func TestPiPPipAudioWithoutMainAudio(t *testing.T) {
 	// 主画面无音轨：小窗声音单独成为音轨，并铺到主画面时长（1s 补到 3s）
 	main := filepath.Join(dir, "silent3s.mp4")
 	pip := filepath.Join(dir, "solo1s.mp4")
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "3", "-an", "-y", main}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "03_autumn_road.mp4"), "-t", "3", "-an", "-y", main}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "3.mp4"), "-t", "1", "-y", pip}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "07_sea_aerial.mp4"), "-t", "1", "-y", pip}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := ff.Probe(main)
@@ -2104,10 +2109,10 @@ func TestPiPMuteMain(t *testing.T) {
 	dir := outDir(t)
 	main := filepath.Join(dir, "mute3s.mp4")
 	pip := filepath.Join(dir, "mute1s.mp4")
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "2.mp4"), "-t", "3", "-y", main}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "03_autumn_road.mp4"), "-t", "3", "-y", main}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "3.mp4"), "-t", "1", "-y", pip}); err != nil {
+	if _, err := ff.run(ff.ffmpegBin(), []string{"-i", clip(t, "07_sea_aerial.mp4"), "-t", "1", "-y", pip}); err != nil {
 		t.Fatal(err)
 	}
 	// 静音主画面 + 保留小窗：只剩小窗一路声音
@@ -2161,11 +2166,11 @@ func TestGridShortest(t *testing.T) {
 	dir := outDir(t)
 	// 一短一长：Shortest 应按短的（3.mp4 截 2s）截断
 	short := filepath.Join(dir, "short.mp4")
-	if err := ff.Transcode(clip(t, "3.mp4"), TranscodeOptions{TrimEnd: 2}, short); err != nil {
+	if err := ff.Transcode(clip(t, "07_sea_aerial.mp4"), TranscodeOptions{TrimEnd: 2}, short); err != nil {
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "grid_short.mp4")
-	err := ff.ComposeGridOpts([]string{clip(t, "2.mp4"), short},
+	err := ff.ComposeGridOpts([]string{clip(t, "03_autumn_road.mp4"), short},
 		GridOptions{Cols: 2, Rows: 1, Shortest: true}, out, EncodeOptions{})
 	if err != nil {
 		t.Fatalf("Shortest 分屏应成功: %v", err)
@@ -2177,7 +2182,7 @@ func TestToGIFSize(t *testing.T) {
 	ff := testFF(t)
 	dir := outDir(t)
 	out := filepath.Join(dir, "gif_opt.gif")
-	if err := ff.ToGIF(clip(t, "2.mp4"), 1, 3, 320, 10, out); err != nil {
+	if err := ff.ToGIF(clip(t, "03_autumn_road.mp4"), 1, 3, 320, 10, out); err != nil {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(out)
@@ -2193,7 +2198,7 @@ func TestToGIFSize(t *testing.T) {
 func TestToGIFWith(t *testing.T) {
 	ff := testFF(t)
 	dir := outDir(t)
-	src := clip(t, "2.mp4")
+	src := clip(t, "03_autumn_road.mp4")
 
 	// 低配参数：窄/低帧率/少色应明显小于高配参数
 	hi := filepath.Join(dir, "gifw_hi.gif")
