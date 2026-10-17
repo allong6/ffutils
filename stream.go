@@ -100,7 +100,8 @@ type FrameWriterOptions struct {
 	// Output 输出视频路径
 	Output string
 
-	// Watermark 可选水印；nil 表示不加水印
+	// Watermark 可选水印；nil 表示不加水印。Opacity 自 v1.2.0 起
+	// 在此路径生效（此前非平铺水印忽略透明度、恒不透明）
 	Watermark *Watermark
 
 	// Encode 输出编码参数，零值用默认（libx264 / ultrafast / yuv420p / aac）
