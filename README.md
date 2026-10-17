@@ -76,7 +76,7 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 | `ApplyVideoFilters(input, VideoFilterChain, output, enc)` | 组合滤镜一次编码：裁剪→旋转→适配画布→字幕→水印；淡入淡出在链尾作用于成片整体（水印/字幕随画面一起淡出） |
 | `Crop(input, x, y, w, h, output, enc)` | 画面裁剪 |
 | `Rotate(input, Rotation, output, enc)` | 旋转/翻转 |
-| `AddWatermark(input, Watermark, opacity, output, enc)` | 图片水印（含平铺） |
+| `AddWatermark(input, Watermark, opacity, output, enc)` | 图片水印：四角/平铺、按画面宽百分比缩放（`ScalePct`）、动态轨迹（`Motion`：rotate/bounce/drift） |
 | `BurnSubtitle(input, subtitle, output, enc)` | 硬字幕 |
 | `FadeAV(input, FadeOptions, output, enc)` | 音视频淡入淡出 |
 | `Reverse(input, output, enc)` | 倒放 |
@@ -138,7 +138,7 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 `TransitionType`（30+ 转场）、`Position`（四角+平铺）、`VideoCodec`（H264/H265/VP9/copy/NVENC/QSV/AMF）、
 `AudioCodec`（AAC/MP3/Opus/FLAC/PCM/copy）、`Preset`（ultrafast~veryslow）、`Rotation`（90°/180°/翻转）、
 `FitMode`（裁剪填满/补边/拉伸）、`PipEndAction`（定格/隐藏）、`ComposeLayout`（拼接/宫格）、
-`Dither`（GIF 抖动算法 9 种）。
+`Dither`（GIF 抖动算法 9 种）、`MotionKind`/`DriftAxis`（水印动态轨迹，v1.2.0）。
 
 两类枚举的非法值策略不同：
 
@@ -147,10 +147,19 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 - **库自有语义的封闭枚举**（`Position`/`FitMode`/`Rotation`/`PipEndAction`/`Dither`）：
   非空未知值在入口报错（不静默回退），零值（""）= 按上下文取默认。
 
-水印 `Position = PosTile`（平铺）在 AddWatermark / ApplyVideoFilters /
-MultiCompose / NewFrameWriter 四条路径生成"缩到主画面 1/4 宽后 4×3 平铺
-居中"的滤镜链（`Watermark.TileGap` 可加格间透明间隔）；画中画
-（PictureInPicture）不支持平铺，传入会报错。
+水印在 AddWatermark / ApplyVideoFilters / MultiCompose / NewFrameWriter
+四条路径能力一致：
+
+- `Position` 四角摆放或 `PosTile` 平铺——"缩到主画面 1/4 宽后 4×3 平铺
+  居中"的滤镜链（`Watermark.TileGap` 可加格间透明间隔）；
+- `Watermark.ScalePct`（v1.2.0）按主画面宽的百分比缩放水印（高度等比
+  自适应），主画面宽由库按链序推导，调用方只传百分比；
+- `Watermark.Motion`（v1.2.0）动态轨迹防盗用：`MotionRotate` 四角轮换、
+  `MotionBounce` 三角波往返（DVD 屏保式）、`MotionDrift` 单向穿越回绕
+  （走马灯式），overlay 位置表达式逐帧求值，渲染成本与静态几乎相同；
+  时间参数一律秒，未参与的轴向锚定 `Position`。
+
+画中画（PictureInPicture）不支持平铺，传入会报错。
 
 ## tools：裁剪版 ffmpeg 构建
 

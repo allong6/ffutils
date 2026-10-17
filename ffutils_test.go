@@ -2293,3 +2293,330 @@ func TestPlayOptsDims(t *testing.T) {
 		t.Fatalf("倒放 [0,2) 应约 2s，实际 %.2f", info.Duration)
 	}
 }
+
+// ---------- Watermark ScalePct / Motion（issue #3） ----------
+//
+// 这组用例用"蓝底视频 + 红色水印"做机器断言：对比度极高，红块包围盒
+// 的位置与尺寸可以精确测量，足以断言缩放比例与各轨迹的相位位置；
+// 轨迹的观感（平滑度、防盗用效果）见 test/output/REVIEW.md 人工清单。
+
+// wmTestClip 生成 10s 蓝底测试视频（320x240@10fps，全关键帧保证 -ss
+// 输入 seek 精确到帧）。
+func wmTestClip(t *testing.T, ff *FFmpeg) string {
+	t.Helper()
+	src := filepath.Join(outDir(t), "blue10s.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-f", "lavfi", "-i", "color=c=0x204080:s=320x240:r=10:d=10",
+		"-g", "1", "-pix_fmt", "yuv420p", "-y", src,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return src
+}
+
+// wmRedPNG 生成指定边长的纯红方图水印。
+func wmRedPNG(t *testing.T, ff *FFmpeg, size int) string {
+	t.Helper()
+	p := filepath.Join(outDir(t), fmt.Sprintf("red%d.png", size))
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-f", "lavfi", "-i", fmt.Sprintf("color=red:s=%dx%d", size, size),
+		"-frames:v", "1", "-y", p,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// redBoxStats 抽 at 秒的帧统计红色包围盒，返回中心/宽的比例坐标
+// （found=false 表示画面中无红块）。
+func redBoxStats(t *testing.T, ff *FFmpeg, video string, at float64) (found bool, fx, fy, fw float64) {
+	t.Helper()
+	img := framePNG(t, ff, video, at, filepath.Join(outDir(t),
+		fmt.Sprintf("box_%s_%d.png", strings.ReplaceAll(filepath.Base(video), ".", "_"), int(at*1000))))
+	b := img.Bounds()
+	minX, minY, maxX, maxY := b.Max.X, b.Max.Y, -1, -1
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl := px(img, x, y)
+			if isRed(r, g, bl) {
+				if x < minX {
+					minX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y > maxY {
+					maxY = y
+				}
+			}
+		}
+	}
+	if maxX < 0 {
+		return false, 0, 0, 0
+	}
+	w, h := b.Dx(), b.Dy()
+	return true,
+		float64(minX+maxX+1) / 2 / float64(w),
+		float64(minY+maxY+1) / 2 / float64(h),
+		float64(maxX-minX+1) / float64(w)
+}
+
+// assertQuad 断言红块中心落在指定半区组合（左/右 × 上/下）。
+func assertQuad(t *testing.T, video string, at, fx, fy float64, right, bottom bool) {
+	t.Helper()
+	side := map[bool]string{true: "右", false: "左"}
+	vert := map[bool]string{true: "下", false: "上"}
+	if (fx > 0.5) != right {
+		t.Fatalf("%s @%.2fs 红块中心 fx=%.2f，期望在%v半区", filepath.Base(video), at, fx, side[right])
+	}
+	if (fy > 0.5) != bottom {
+		t.Fatalf("%s @%.2fs 红块中心 fy=%.2f，期望在%v半区", filepath.Base(video), at, fy, vert[bottom])
+	}
+}
+
+// TestWatermarkScalePct 相对缩放：80px 红方图 + ScalePct=50 叠在 320 宽
+// 画面，红块应宽 160（占比 0.5、方图等比）且仍锚在右下角。
+func TestWatermarkScalePct(t *testing.T) {
+	ff := testFF(t)
+	src := wmTestClip(t, ff)
+	wm := wmRedPNG(t, ff, 80)
+	out := filepath.Join(outDir(t), "scaled.mp4")
+	if err := ff.AddWatermark(src, Watermark{
+		Path: wm, Position: PosBottomRight, ScalePct: 50,
+	}, 1, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	found, fx, fy, fw := redBoxStats(t, ff, out, 1.0)
+	if !found {
+		t.Fatal("画面中未找到红色水印")
+	}
+	if fw < 0.44 || fw > 0.56 {
+		t.Fatalf("ScalePct=50 红块宽占比 %.2f，应在 0.5 附近", fw)
+	}
+	assertQuad(t, out, 1.0, fx, fy, true, true)
+	t.Logf("ScalePct=50: 中心 (%.2f,%.2f) 宽占比 %.2f", fx, fy, fw)
+}
+
+// TestWatermarkScalePctWithFit ApplyVideoFilters 路径的主画面宽推导：
+// 320x240 源 Fit 到 640x480 后 ScalePct=25，水印宽必须按 Fit 后的 640
+// 计算（160px，占比 0.25）而不是原始 320。
+func TestWatermarkScalePctWithFit(t *testing.T) {
+	ff := testFF(t)
+	src := wmTestClip(t, ff)
+	wm := wmRedPNG(t, ff, 80)
+	out := filepath.Join(outDir(t), "fit_scaled.mp4")
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Fit:       &FitOptions{Width: 640, Height: 480},
+		Watermark: &Watermark{Path: wm, Position: PosTopLeft, ScalePct: 25},
+	}, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 640 || info.Video.Height != 480 {
+		t.Fatalf("Fit 后应 640x480，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+	found, fx, fy, fw := redBoxStats(t, ff, out, 1.0)
+	if !found {
+		t.Fatal("画面中未找到红色水印")
+	}
+	if fw < 0.19 || fw > 0.31 {
+		t.Fatalf("Fit 640 + ScalePct=25 红块宽占比 %.2f，应在 0.25 附近（若按原始宽 320 算会得到 0.5）", fw)
+	}
+	assertQuad(t, out, 1.0, fx, fy, false, false)
+}
+
+// TestWatermarkMotionRotate 四角轮换：默认自右下角起始，Interval=2 时
+// 相位依次 BR → BL → TL → TR，抽各相位中点帧断言象限。
+func TestWatermarkMotionRotate(t *testing.T) {
+	ff := testFF(t)
+	src := wmTestClip(t, ff)
+	wm := wmRedPNG(t, ff, 80)
+	out := filepath.Join(outDir(t), "rotate.mp4")
+	if err := ff.AddWatermark(src, Watermark{
+		Path: wm, // Position 零值 = 右下角起始
+		Motion: &Motion{Kind: MotionRotate, Interval: 2},
+	}, 1, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	quads := [4][2]bool{{true, true}, {false, true}, {false, false}, {true, false}}
+	for i, q := range quads {
+		at := float64(i*2) + 1 // 相位 [2i, 2i+2) 的中点
+		found, fx, fy, _ := redBoxStats(t, ff, out, at)
+		if !found {
+			t.Fatalf("@%.1fs 未找到红块（rotate 相位 %d）", at, i)
+		}
+		assertQuad(t, out, at, fx, fy, q[0], q[1])
+	}
+}
+
+// TestWatermarkMotionBounceAndDrift 三角波往返与走马灯穿越：
+//   - bounce TX=2：t≈0 在右端、t≈TX 在左端，y 锚定底部；
+//   - drift Period=10 水平：x(t) = -w + (W+w)*t/10，t=3/6 时刻中心
+//     应在 0.25/0.625 附近，y 锚定底部。
+func TestWatermarkMotionBounceAndDrift(t *testing.T) {
+	ff := testFF(t)
+	src := wmTestClip(t, ff)
+	wm := wmRedPNG(t, ff, 80)
+
+	bounce := filepath.Join(outDir(t), "bounce.mp4")
+	if err := ff.AddWatermark(src, Watermark{
+		Path: wm, Motion: &Motion{Kind: MotionBounce, TX: 2},
+	}, 1, bounce, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	found, fx, fy, _ := redBoxStats(t, ff, bounce, 0.05)
+	if !found {
+		t.Fatal("bounce @0.05s 未找到红块")
+	}
+	if fx < 0.55 {
+		t.Fatalf("bounce t≈0 红块应在右端（fx=%.2f）", fx)
+	}
+	assertQuad(t, bounce, 0.05, fx, fy, true, true) // y 锚定右下角
+	found, fx2, fy2, _ := redBoxStats(t, ff, bounce, 2.05)
+	if !found {
+		t.Fatal("bounce @2.05s 未找到红块")
+	}
+	if fx2 > 0.45 {
+		t.Fatalf("bounce t≈TX 红块应在左端（fx=%.2f）", fx2)
+	}
+	assertQuad(t, bounce, 2.05, fx2, fy2, false, true)
+
+	drift := filepath.Join(outDir(t), "drift.mp4")
+	if err := ff.AddWatermark(src, Watermark{
+		Path: wm, Motion: &Motion{Kind: MotionDrift, Period: 10},
+	}, 1, drift, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		at, wantFx float64
+	}{{3, 0.25}, {6, 0.625}} {
+		found, fx, fy, _ := redBoxStats(t, ff, drift, tc.at)
+		if !found {
+			t.Fatalf("drift @%.0fs 未找到红块", tc.at)
+		}
+		if fx < tc.wantFx-0.09 || fx > tc.wantFx+0.09 {
+			t.Fatalf("drift @%.0fs 红块中心 fx=%.2f，期望约 %.3f", tc.at, fx, tc.wantFx)
+		}
+		assertQuad(t, drift, tc.at, fx, fy, fx > 0.5, true)
+	}
+}
+
+// TestWatermarkMotionMulticompose MultiCompose 路径的动态水印：整幅
+// 输出宽 320，drift 水平 Period=10，t=6 时中心应在 0.625 附近——证明
+// 统一水印段在合成链里同样生效。
+func TestWatermarkMotionMulticompose(t *testing.T) {
+	ff := testFF(t)
+	src := wmTestClip(t, ff)
+	wm := wmRedPNG(t, ff, 80)
+	out := filepath.Join(outDir(t), "mc_drift.mp4")
+	if err := ff.MultiCompose(MultiComposeOptions{
+		Clips:     []ClipSpec{{Path: src, Mute: true}},
+		Watermark: &Watermark{Path: wm, Motion: &Motion{Kind: MotionDrift, Period: 10}},
+	}, out); err != nil {
+		t.Fatal(err)
+	}
+	found, fx, _, _ := redBoxStats(t, ff, out, 6.0)
+	if !found {
+		t.Fatal("multicompose drift @6s 未找到红块")
+	}
+	if fx < 0.54 || fx > 0.71 {
+		t.Fatalf("multicompose drift @6s 红块中心 fx=%.2f，期望约 0.625", fx)
+	}
+}
+
+// TestFrameWriterWatermarkOpacityMotion FrameWriter 路径：透明度此前
+// 在该路径被静默忽略（v1.2.0 修复），且动态轨迹在推帧管道（t 按帧
+// 递增）下同样生效。
+func TestFrameWriterWatermarkOpacityMotion(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	// 帧用 PNG（与既有 TestFrameWriter 一致）：小尺寸纯色 JPEG 压得太小，
+	// image2pipe 的探测数据不足会识别成 "Video: none"
+	frame := filepath.Join(dir, "blue_frame.png")
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-f", "lavfi", "-i", "color=c=0x204080:s=320x240", "-frames:v", "1", "-y", frame,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	frameBytes, err := os.ReadFile(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wm := wmRedPNG(t, ff, 80)
+	out := filepath.Join(dir, "fw_motion.mp4")
+	w, err := ff.NewFrameWriter(FrameWriterOptions{
+		Width: 320, Height: 240, Fps: 4, Output: out,
+		Watermark: &Watermark{Path: wm, Opacity: 0.6, Motion: &Motion{Kind: MotionBounce, TX: 1}},
+		Encode:   EncodeOptions{Preset: "ultrafast"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ { // 8 帧 @ 4fps = 2s
+		if err := w.Write(frameBytes); err != nil {
+			w.Abort()
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertDuration(t, ff, out, 2.0, 0.2)
+	// t=0.25（第 2 帧）：bounce TX=1 → x=10+(320-80-20)*|mod(0.25,2)-1|≈175，
+	// 中心 ≈0.67 在右半区；半透明红（0.6）仍显著红于蓝底
+	found, fx, _, _ := redBoxStats(t, ff, out, 0.25)
+	if !found {
+		t.Fatal("FrameWriter 半透明动态水印未在画面中检出（Opacity 修复回归？）")
+	}
+	if fx < 0.55 {
+		t.Fatalf("FrameWriter bounce @0.25s 红块中心 fx=%.2f，应在右半区", fx)
+	}
+}
+
+// TestWatermarkValidation ScalePct/Motion 的入口校验：非法值必须报错
+// 而不是静默回退（校验在执行 ffmpeg 之前，不依赖素材存在）。
+func TestWatermarkValidation(t *testing.T) {
+	ff := testFF(t)
+	bad := []struct {
+		name string
+		wm   Watermark
+	}{
+		{"ScalePct 负数", Watermark{Path: "x.png", ScalePct: -1}},
+		{"ScalePct 超 100", Watermark{Path: "x.png", ScalePct: 101}},
+		{"ScalePct+PosTile 互斥", Watermark{Path: "x.png", ScalePct: 50, Position: PosTile}},
+		{"未知轨迹类型", Watermark{Path: "x.png", Motion: &Motion{Kind: MotionKind("fly")}}},
+		{"Motion+PosTile 互斥", Watermark{Path: "x.png", Position: PosTile, Motion: &Motion{Kind: MotionRotate}}},
+		{"rotate 负间隔", Watermark{Path: "x.png", Motion: &Motion{Kind: MotionRotate, Interval: -1}}},
+		{"bounce 双轴全零", Watermark{Path: "x.png", Motion: &Motion{Kind: MotionBounce}}},
+		{"bounce 负周期", Watermark{Path: "x.png", Motion: &Motion{Kind: MotionBounce, TX: -1, TY: 2}}},
+		{"drift 负周期", Watermark{Path: "x.png", Motion: &Motion{Kind: MotionDrift, Period: -1}}},
+		{"drift 未知轴向", Watermark{Path: "x.png", Motion: &Motion{Kind: MotionDrift, Axis: DriftAxis("diagonal")}}},
+	}
+	out := filepath.Join(outDir(t), "bad.mp4")
+	for _, tc := range bad {
+		if err := ff.AddWatermark("whatever.mp4", tc.wm, 1, out, EncodeOptions{}); err == nil {
+			t.Fatalf("%s: 应报错", tc.name)
+		} else {
+			t.Logf("%s: %v", tc.name, err)
+		}
+	}
+	// ApplyVideoFilters / MultiCompose 入口同样拦
+	if err := ff.ApplyVideoFilters("whatever.mp4", VideoFilterChain{
+		Watermark: &Watermark{Path: "x.png", ScalePct: 101},
+	}, out, EncodeOptions{}); err == nil {
+		t.Fatal("ApplyVideoFilters 的 ScalePct 越界应报错")
+	}
+	if err := ff.MultiCompose(MultiComposeOptions{
+		Clips:     []ClipSpec{{Path: "a.mp4"}},
+		Watermark: &Watermark{Path: "x.png", Motion: &Motion{Kind: MotionKind("fly")}},
+	}, out); err == nil {
+		t.Fatal("MultiCompose 的未知轨迹应报错")
+	}
+}
+

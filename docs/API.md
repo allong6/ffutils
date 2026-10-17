@@ -59,7 +59,7 @@
 | `ApplyVideoFilters(input, chain, output, enc)` | 组合滤镜一次编码：裁剪（`CropRect`）→ 旋转 → 适配画布（`FitOptions`）→ 字幕 → 水印 → 淡入淡出（成片整体；自 v1.1.0 起水印/字幕随画面淡出）（`VideoFilterChain`） |
 | `Crop(input, x, y, w, h, output, enc)` | 画面裁剪 |
 | `Rotate(input, r, output, enc)` | 旋转/翻转（`Rotation`） |
-| `AddWatermark(input, wm, opacity, output, enc)` | 图片水印（`Watermark`；`Position` 含四角与平铺 PosTile，平铺可用 `TileGap` 格间透明间隔，Since v1.1.0） |
+| `AddWatermark(input, wm, opacity, output, enc)` | 图片水印（`Watermark`；`Position` 含四角与平铺 PosTile，平铺可用 `TileGap` 格间透明间隔，Since v1.1.0；`ScalePct` 按主画面宽百分比缩放 + `Motion` 动态轨迹（rotate/bounce/drift），Since v1.2.0） |
 | `BurnSubtitle(input, subtitle, output, enc)` | 硬字幕（srt/ass） |
 | `FadeAV(input, opts, output, enc)` | 音视频淡入淡出（`FadeOptions`） |
 | `Reverse(input, output, enc)` | 整条倒放 |
@@ -92,6 +92,6 @@
 |---|---|
 | `EncodeOptions` / `TranscodeOptions` | 编码参数（零值即合理默认，`ExtraArgs` 逃生舱） |
 | `VideoCodec` / `AudioCodec` / `Preset` / `TransitionType` | **开放枚举**：透传 ffmpeg 词表，未列出的字符串字面量仍可直接赋值，零值 = 按上下文取默认 |
-| `Position` / `FitMode` / `Rotation` / `PipEndAction` / `Dither` / `ComposeLayout` | **封闭枚举**：库自有语义，非空未知值在入口报错（不静默回退），零值 = 按上下文取默认 |
+| `Position` / `FitMode` / `Rotation` / `PipEndAction` / `Dither` / `ComposeLayout` / `MotionKind` / `DriftAxis` | **封闭枚举**：库自有语义，非空未知值在入口报错（不静默回退），零值 = 按上下文取默认 |
 
 两类枚举的策略细节与 `FitMode` 的适配语义见 [README](../README.md)。

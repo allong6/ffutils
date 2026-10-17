@@ -134,6 +134,9 @@ func (f *FFmpeg) MultiCompose(opts MultiComposeOptions, output string) error {
 			return fmt.Errorf("叠加层 %d: %w", k+1, err)
 		}
 	}
+	if err := validateWatermark(opts.Watermark); err != nil {
+		return err
+	}
 
 	// 探测主输入，计算预处理后的有效时长
 	infos := make([]*ProbeResult, n)
@@ -355,18 +358,13 @@ func (f *FFmpeg) MultiCompose(opts MultiComposeOptions, output string) error {
 			}
 			chains = append(chains, segs...)
 		} else {
-			pos, err := wm.overlayExpr()
+			// ScalePct/Motion 走统一水印段；主画面宽即整幅输出宽 W
+			segs, err := watermarkSegments(vLabel, fmt.Sprintf("[%d:v]", idx), next,
+				wm, wm.Opacity, W)
 			if err != nil {
 				return err
 			}
-			var b strings.Builder
-			b.WriteString(fmt.Sprintf("[%d:v]", idx))
-			if wm.Opacity > 0 && wm.Opacity < 1 {
-				b.WriteString(fmt.Sprintf("format=rgba,colorchannelmixer=aa=%.2f", wm.Opacity))
-			}
-			b.WriteString("[w]")
-			chains = append(chains, b.String())
-			chains = append(chains, fmt.Sprintf("%s[w]overlay=%s%s", vLabel, pos, next))
+			chains = append(chains, segs...)
 		}
 		vLabel = next
 	}

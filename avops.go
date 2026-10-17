@@ -54,10 +54,13 @@ func (f *FFmpeg) Rotate(input string, r Rotation, output string, enc EncodeOptio
 }
 
 // AddWatermark 给现有视频叠加图片水印（不重编码音频）。
-// 透明度 0~1，1 为不透明。
+// 透明度 0~1，1 为不透明。Watermark.ScalePct/Motion 见字段说明（v1.2.0）。
 func (f *FFmpeg) AddWatermark(input string, wm Watermark, opacity float64, output string, enc EncodeOptions) error {
 	if wm.Path == "" {
 		return fmt.Errorf("水印图片路径不能为空")
+	}
+	if err := validateWatermark(&wm); err != nil {
+		return err
 	}
 	var graph string
 	if wm.Position == PosTile {
@@ -73,17 +76,20 @@ func (f *FFmpeg) AddWatermark(input string, wm Watermark, opacity float64, outpu
 		}
 		graph = strings.Join(segs, ";")
 	} else {
-		pos, err := wm.overlayExpr()
+		// ScalePct 按原始主画面宽换算像素，需探测一次
+		mainW := 0
+		if wm.ScalePct > 0 {
+			info, err := f.Probe(input)
+			if err != nil {
+				return fmt.Errorf("探测主画面失败: %w", err)
+			}
+			mainW = info.Video.Width
+		}
+		segs, err := watermarkSegments("[0:v]", "[1:v]", "[v]", &wm, opacity, mainW)
 		if err != nil {
 			return err
 		}
-		if opacity > 0 && opacity < 1 {
-			// 半透明：先给水印图补 alpha 通道并整体调低透明度，再叠加
-			graph = fmt.Sprintf("[1:v]format=rgba,colorchannelmixer=aa=%.2f[w];[0:v][w]overlay=%s[v]",
-				opacity, pos)
-		} else {
-			graph = fmt.Sprintf("[0:v][1:v]overlay=%s[v]", pos)
-		}
+		graph = strings.Join(segs, ";")
 	}
 	args := []string{"-i", input, "-i", wm.Path,
 		"-filter_complex", graph, "-map", "[v]", "-map", "0:a:0?"}
@@ -317,5 +323,194 @@ func watermarkTileSegments(mainLabel, wmLabel, outLabel string, cellW int, opaci
 	segs = append(segs, fmt.Sprintf("%sscale=%d:-2%s,loop=loop=%d:size=1:start=0,tile=4x3[wt]",
 		wm, scaleW, pad, 4*3-1))
 	segs = append(segs, fmt.Sprintf("%s[wt]overlay=(W-w)/2:(H-h)/2%s", mainLabel, outLabel))
+	return segs, nil
+}
+
+// validateWatermark 校验水印参数的跨字段约束，是四条水印路径
+// （AddWatermark / ApplyVideoFilters / MultiCompose / NewFrameWriter）的
+// 公共入口校验。单字段语义（Path 非空）由各调用方处理；这里拦新增
+// 能力（ScalePct/Motion）与既有形态的组合冲突与非法枚举，不静默回退。
+func validateWatermark(w *Watermark) error {
+	if w == nil {
+		return nil
+	}
+	if w.ScalePct != 0 {
+		if w.ScalePct < 1 || w.ScalePct > 100 {
+			return fmt.Errorf("水印缩放比例 ScalePct=%d 超出范围（1~100）", w.ScalePct)
+		}
+		if w.Position == PosTile {
+			return fmt.Errorf("ScalePct 与平铺水印（PosTile）互斥：平铺已有固定的 1/4 宽缩放")
+		}
+	}
+	if m := w.Motion; m != nil && m.Kind != "" {
+		if !m.Kind.valid() {
+			return fmt.Errorf("未知水印轨迹类型: %q（可选 rotate/bounce/drift，见 MotionKind 常量组）", string(m.Kind))
+		}
+		if w.Position == PosTile {
+			return fmt.Errorf("Motion 与平铺水印（PosTile）互斥：平铺是另一种防盗用形态，二者选一")
+		}
+		switch m.Kind {
+		case MotionRotate:
+			if m.Interval < 0 {
+				return fmt.Errorf("rotate 轨迹的 Interval 不能为负数: %v", m.Interval)
+			}
+		case MotionBounce:
+			if m.TX < 0 || m.TY < 0 {
+				return fmt.Errorf("bounce 轨迹的 TX/TY 不能为负数: %v/%v", m.TX, m.TY)
+			}
+			if m.TX <= 0 && m.TY <= 0 {
+				return fmt.Errorf("bounce 轨迹的 TX/TY 不能同时 <=0（等于静态水印；只动一轴请只设该轴）")
+			}
+		case MotionDrift:
+			if m.Period < 0 {
+				return fmt.Errorf("drift 轨迹的 Period 不能为负数: %v", m.Period)
+			}
+			if m.Axis != "" && !m.Axis.valid() {
+				return fmt.Errorf("未知漂移轴向: %q（可选 horizontal/vertical，见 DriftAxis 常量组）", string(m.Axis))
+			}
+		}
+	}
+	return nil
+}
+
+// motionPosExpr 生成动态水印的 overlay 位置表达式，形如
+// x='…':y='…'——显式 key + 单引号缺一不可：轨迹表达式含逗号（if/mod
+// 嵌套）且 drift 以负号开头，不加引号会被 filtergraph 按 , : 拆碎。
+//
+// 表达式里的 W/H（主画面）、w/h（水印）、t（时间戳）全部是 overlay
+// 滤镜的运行时变量（逐帧求值，渲染成本与静态几乎相同），因此不需要
+// 探测主画面尺寸；与 ScalePct 组合时 w/h 即缩放后的值，天然自洽。
+func motionPosExpr(w *Watermark) (string, error) {
+	m := w.Motion
+	if m == nil || m.Kind == "" {
+		return "", fmt.Errorf("motionPosExpr 只在 Motion 启用时调用")
+	}
+	// posXY 兼作 Position 合法性校验（非法值在此报错，避免拼出错位的
+	// 轮换序列）与 bounce/drift 锚定轴的静态坐标来源
+	sx, sy, err := w.posXY()
+	if err != nil {
+		return "", err
+	}
+	margin := w.Margin
+	if margin <= 0 {
+		margin = 10
+	}
+	num := func(v float64) string { return fmt.Sprintf("%.3f", v) }
+
+	var x, y string
+	switch m.Kind {
+	case MotionRotate:
+		// 四角坐标按 TL→TR→BR→BL 顺时针排列，自 Position 起始轮换，
+		// P=4×T 为完整轮换周期
+		T := m.Interval
+		if T <= 0 {
+			T = 10
+		}
+		mm := fmt.Sprintf("%d", margin)
+		wm := fmt.Sprintf("W-w-%d", margin)
+		hm := fmt.Sprintf("H-h-%d", margin)
+		xs := []string{mm, wm, wm, mm} // TL TR BR BL
+		ys := []string{mm, mm, hm, hm}
+		start := 2 // 默认/零值 = 右下角
+		switch Position(strings.ToLower(string(w.Position))) {
+		case PosTopLeft:
+			start = 0
+		case PosTopRight:
+			start = 1
+		case PosBottomLeft:
+			start = 3
+		}
+		ord := make([]int, 4)
+		for i := range ord {
+			ord[i] = (start + i) % 4
+		}
+		mt := fmt.Sprintf("mod(t,%s)", num(4*T))
+		pick := func(vals []string) string {
+			return fmt.Sprintf("if(lt(%s,%s),%s,if(lt(%s,%s),%s,if(lt(%s,%s),%s,%s)))",
+				mt, num(T), vals[ord[0]],
+				mt, num(2*T), vals[ord[1]],
+				mt, num(3*T), vals[ord[2]], vals[ord[3]])
+		}
+		x, y = pick(xs), pick(ys)
+	case MotionBounce:
+		// 三角波往返（DVD 屏保式）：t=0 在一侧边缘、t=TX 在另一侧，
+		// 完整往返周期 2×TX；未参与的轴锚定 Position
+		if m.TX > 0 {
+			x = fmt.Sprintf("%d+(W-w-%d)*abs(mod(t/%s,2)-1)", margin, 2*margin, num(m.TX))
+		} else {
+			x = sx
+		}
+		if m.TY > 0 {
+			y = fmt.Sprintf("%d+(H-h-%d)*abs(mod(t/%s,2)-1)", margin, 2*margin, num(m.TY))
+		} else {
+			y = sy
+		}
+	case MotionDrift:
+		// 单向穿越回绕（走马灯式）：从画面外侧完全进入、另一侧完全
+		// 离开后回绕；Period 为完整穿越一次的秒数
+		P := m.Period
+		if P <= 0 {
+			P = 10
+		}
+		if m.Axis == DriftVertical {
+			x = sx
+			y = fmt.Sprintf("-h+mod(t*(H+h)/%s,H+h)", num(P))
+		} else {
+			x = fmt.Sprintf("-w+mod(t*(W+w)/%s,W+w)", num(P))
+			y = sy
+		}
+	}
+	return fmt.Sprintf("x='%s':y='%s'", x, y), nil
+}
+
+// watermarkSegments 生成非平铺水印的 filter_graph 分段（段间以 ";" 连接）：
+// 可选的水印预处理段（透明度 ± ScalePct 缩放）+ overlay 段。四条水印
+// 路径（AddWatermark / ApplyVideoFilters / MultiCompose / NewFrameWriter）
+// 共用本函数，保证能力与行为在各路径一致。
+//
+//   - opacity ∈ (0,1) 时水印先 format=rgba,colorchannelmixer 调透明度；
+//   - wm.ScalePct > 0 时按 mainW（主画面宽，调用方按各自链序推导后传入）
+//     缩放，高度 -2 按宽高比自适应并取偶；两项并存时合并在同一分段，
+//     全部为零时无预处理段、水印直连 overlay（与 v1.1.0 及之前一致）；
+//   - 位置：静态走 overlayExpr，Motion 走 motionPosExpr（见各自说明）。
+//
+// [w] 只在本函数产出的分段内产生并消费，不会与调用方 filter_graph 的
+// 其他 label 冲突（每个 graph 至多一路水印）。
+func watermarkSegments(mainLabel, wmLabel, outLabel string, wm *Watermark, opacity float64, mainW int) ([]string, error) {
+	var pre string
+	if opacity > 0 && opacity < 1 {
+		pre = fmt.Sprintf("format=rgba,colorchannelmixer=aa=%.2f", opacity)
+	}
+	if wm.ScalePct > 0 {
+		if mainW <= 0 {
+			return nil, fmt.Errorf("ScalePct=%d 需要主画面宽度，调用方未提供（mainW=%d）", wm.ScalePct, mainW)
+		}
+		w := mainW * wm.ScalePct / 100
+		w &^= 1 // 取偶，编码器友好
+		if w < 2 {
+			w = 2
+		}
+		if pre != "" {
+			pre += ","
+		}
+		pre += fmt.Sprintf("scale=%d:-2", w)
+	}
+	label := wmLabel
+	segs := make([]string, 0, 2)
+	if pre != "" {
+		segs = append(segs, wmLabel+pre+"[w]")
+		label = "[w]"
+	}
+	var pos string
+	var err error
+	if wm.Motion != nil && wm.Motion.Kind != "" {
+		pos, err = motionPosExpr(wm)
+	} else {
+		pos, err = wm.overlayExpr()
+	}
+	if err != nil {
+		return nil, err
+	}
+	segs = append(segs, fmt.Sprintf("%s%soverlay=%s%s", mainLabel, label, pos, outLabel))
 	return segs, nil
 }

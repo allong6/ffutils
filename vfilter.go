@@ -51,6 +51,23 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 	if chain.Fit != nil && (chain.Fit.Width <= 0 || chain.Fit.Height <= 0) {
 		return fmt.Errorf("适配画布宽高必须为正数: %dx%d", chain.Fit.Width, chain.Fit.Height)
 	}
+	if err := validateWatermark(chain.Watermark); err != nil {
+		return err
+	}
+
+	// 懒探测：淡入淡出（时长）、平铺水印与 ScalePct（主画面宽）都需要
+	// 输入信息，多个条件并存时只探测一次
+	var probed *ProbeResult
+	probeOnce := func() (*ProbeResult, error) {
+		if probed == nil {
+			info, err := f.Probe(input)
+			if err != nil {
+				return nil, fmt.Errorf("探测主画面失败: %w", err)
+			}
+			probed = info
+		}
+		return probed, nil
+	}
 
 	// 视频滤镜链（按固定顺序拼接：裁剪 → 旋转 → 适配 → 字幕 → 淡入淡出）。
 	// 裁剪必须在旋转之前：CropRect 坐标按原始画面定义（调用方按源分辨率
@@ -82,7 +99,7 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 	// fade 表达式单独收集，恒排在链尾（作用于成片整体，见上方说明）。
 	var fadeExprs []string
 	if chain.Fade != nil && (chain.Fade.VideoIn > 0 || chain.Fade.VideoOut > 0) {
-		info, err := f.Probe(input)
+		info, err := probeOnce()
 		if err != nil {
 			return err
 		}
@@ -124,9 +141,9 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 		}
 		if wm.Position == PosTile {
 			// 平铺格子宽度按主画面 1/4 计，需要先探测
-			info, err := f.Probe(input)
+			info, err := probeOnce()
 			if err != nil {
-				return fmt.Errorf("探测主画面失败: %w", err)
+				return err
 			}
 			segs, err := watermarkTileSegments(main, "[1:v]", wmOut,
 				tileCellWidth(info.Video.Width), wm.Opacity, wm.TileGap)
@@ -134,19 +151,34 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 				return err
 			}
 			parts = append(parts, segs...)
-		} else if wm.Opacity > 0 && wm.Opacity < 1 {
-			pos, err := wm.overlayExpr()
-			if err != nil {
-				return err
-			}
-			parts = append(parts, fmt.Sprintf("[1:v]format=rgba,colorchannelmixer=aa=%.2f[w]", wm.Opacity))
-			parts = append(parts, fmt.Sprintf("%s[w]overlay=%s%s", main, pos, wmOut))
 		} else {
-			pos, err := wm.overlayExpr()
+			// ScalePct 的主画面宽按链序推导：水印叠加在全部主画面滤镜
+			// 之后，它看到的是链尾画面宽——Fit 画布 > 裁剪+旋转换算 >
+			// 探测原始宽。这套几何规则只有库知道，调用方只传语义百分比。
+			mainW := 0
+			if wm.ScalePct > 0 {
+				switch {
+				case chain.Fit != nil:
+					mainW = chain.Fit.Width
+				case chain.Crop != nil:
+					// 裁剪在旋转之前（见上方链序说明）：旋转 90°/270° 后宽高互换
+					mainW = chain.Crop.W
+					if chain.Rotate == Rot90CW || chain.Rotate == Rot90CCW {
+						mainW = chain.Crop.H
+					}
+				default:
+					info, err := probeOnce()
+					if err != nil {
+						return err
+					}
+					mainW = info.Video.Width
+				}
+			}
+			segs, err := watermarkSegments(main, "[1:v]", wmOut, wm, wm.Opacity, mainW)
 			if err != nil {
 				return err
 			}
-			parts = append(parts, fmt.Sprintf("%s[1:v]overlay=%s%s", main, pos, wmOut))
+			parts = append(parts, segs...)
 		}
 		if len(fadeExprs) > 0 {
 			parts = append(parts, wmOut+strings.Join(fadeExprs, ",")+"[v]")

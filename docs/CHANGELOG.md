@@ -13,7 +13,42 @@ ffutils 的全部功能更新、方法变更与废弃都记录在本文件，供
 
 ## Unreleased
 
-（暂无——下一次功能更新写在这里，发版时更名为版本号 + 日期。）
+### 新增
+
+- **`Watermark.ScalePct`：水印按主画面宽的百分比缩放**（#3）。0 =
+  原始尺寸（现状不变），有效范围 1~100；50 表示水印宽为主画面宽的
+  50%，高度按宽高比自适应（`scale=n:-2`）。与 PosTile 互斥（平铺已有
+  固定的 1/4 宽缩放）。主画面宽由库按各路径链序推导（Fit 画布 >
+  裁剪+旋转换算 > 探测原始宽 > 已知画布/输出宽），调用方只传语义
+  百分比、无需自行换算像素。四条水印路径（AddWatermark /
+  ApplyVideoFilters / MultiCompose / NewFrameWriter）同步生效。
+  Since v1.2.0.
+- **`Watermark.Motion`：水印动态轨迹**（防盗用动态水印，#3），新类型
+  `Motion{Kind, Interval, TX, TY, Period, Axis}` 与枚举
+  `MotionKind`（`MotionRotate` 四角轮换 / `MotionBounce` 三角波往返 /
+  `MotionDrift` 单向穿越回绕）、`DriftAxis`（水平/垂直）。nil 或
+  `Kind` 空 = 静态（现状不变）。轨迹用 overlay 的 x/y 时间表达式
+  逐帧求值，渲染成本与静态几乎相同；时间参数一律秒（周期/间隔语义，
+  分辨率无关），未参与的轴向锚定 `Position`。`ScalePct` 可与 Motion
+  自由组合（w/h 运行时取缩放后的值）。校验：未知 Kind/Axis、
+  Motion 或 ScalePct 与 PosTile 组合、bounce 双轴同时 `<=0`、时间
+  参数为负均在入口报错。四条水印路径同步生效。Since v1.2.0.
+
+### 修复
+
+- **NewFrameWriter（FrameWriter）的水印透明度被静默忽略**：非平铺
+  水印路径此前不处理 `Watermark.Opacity`（拼滤镜时直接丢弃），
+  0~1 之间的取值实际完全不透明。自 v1.2.0 起与其他三条水印路径
+  一致生效。**行为变化**：此前依赖"FrameWriter 水印恒不透明"的
+  调用方如需保持旧观感，把 Opacity 留 0（或 >=1）即可。
+
+### 内部（不影响 API）
+
+- 四条水印路径各自手拼的水印 filter_graph 分段收拢为统一的
+  `watermarkSegments`（私有），零值字段时产出与 v1.1.0 逐段一致；
+  入口校验统一为 `validateWatermark`。
+- 测试素材批次更新（1/2/3.mp4 → 01_seal 等 7 段）后的测试基线迁移：
+  引用与时长/分辨率断言对齐新素材（仅测试代码，不影响库）。
 
 ## v1.1.0（2026-09-30）
 

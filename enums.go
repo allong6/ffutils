@@ -88,6 +88,54 @@ const (
 )
 
 // ---------------------------------------------------------------------------
+// 水印动态轨迹（Watermark.Motion.Kind）与漂移轴向（Motion.Axis）
+// ---------------------------------------------------------------------------
+
+// MotionKind 水印动态轨迹类型（防盗用动态水印）。零值（""）表示静态水印。
+// 封闭枚举：非法值在入口校验报错，不静默回退。
+// Since v1.2.0.
+type MotionKind string
+
+const (
+	// MotionRotate 四角轮换：按 TL→TR→BR→BL 顺序每隔 Interval 秒跳到下一角
+	// （起始角为 Position），抖音类平台防盗用水印的常见做法。
+	MotionRotate MotionKind = "rotate"
+	// MotionBounce 三角波往返（DVD 屏保式）：水平周期 TX 秒、垂直周期 TY 秒，
+	// 单轴周期 <=0 时该轴锚定 Position 不动。
+	MotionBounce MotionKind = "bounce"
+	// MotionDrift 单向穿越回绕（走马灯式）：每 Period 秒完整穿越画面一次，
+	// 走出边界后从另一侧回绕，未参与轴向锚定 Position。
+	MotionDrift MotionKind = "drift"
+)
+
+// valid 报告 k 是否为已定义的轨迹类型（不含零值——零值即静态）。
+func (k MotionKind) valid() bool {
+	switch k {
+	case MotionRotate, MotionBounce, MotionDrift:
+		return true
+	}
+	return false
+}
+
+// DriftAxis MotionDrift 的漂移轴向。零值（""）默认 DriftHorizontal。
+// Since v1.2.0.
+type DriftAxis string
+
+const (
+	DriftHorizontal DriftAxis = "horizontal" // 水平穿越（默认）
+	DriftVertical   DriftAxis = "vertical"   // 垂直穿越
+)
+
+// valid 报告 a 是否为已定义的漂移轴向（不含零值——零值由生成表达式时兜底）。
+func (a DriftAxis) valid() bool {
+	switch a {
+	case DriftHorizontal, DriftVertical:
+		return true
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
 // 画面适配模式（VideoFilterChain.Fit / XfadeOptions.Fit / GridOptions.Fit /
 // MultiComposeOptions.Fit / OverlayLayer.Fit）
 // ---------------------------------------------------------------------------
