@@ -73,10 +73,11 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 
 | 方法 | 用途 |
 |---|---|
-| `ApplyVideoFilters(input, VideoFilterChain, output, enc)` | 组合滤镜一次编码：裁剪→旋转→适配画布→字幕→水印；淡入淡出在链尾作用于成片整体（水印/字幕随画面一起淡出） |
+| `ApplyVideoFilters(input, VideoFilterChain, output, enc)` | 组合滤镜一次编码：裁剪→旋转→适配画布→字幕→水印→淡入淡出→首帧封面；淡入淡出作用于成片整体（水印/字幕随画面一起淡出） |
 | `Crop(input, x, y, w, h, output, enc)` | 画面裁剪 |
 | `Rotate(input, Rotation, output, enc)` | 旋转/翻转 |
 | `AddWatermark(input, Watermark, opacity, output, enc)` | 图片水印：四角/平铺、按画面宽百分比缩放（`ScalePct`）、动态轨迹（`Motion`：rotate/bounce/drift） |
+| `PrependCover(input, CoverOptions, frames, output, enc)` | 片头插入封面静帧（时长增加、原内容一帧不少） |
 | `BurnSubtitle(input, subtitle, output, enc)` | 硬字幕 |
 | `FadeAV(input, FadeOptions, output, enc)` | 音视频淡入淡出 |
 | `Reverse(input, output, enc)` | 倒放 |

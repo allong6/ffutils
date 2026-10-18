@@ -2620,3 +2620,232 @@ func TestWatermarkValidation(t *testing.T) {
 	}
 }
 
+// ---------- 封面帧：首帧覆盖 Cover + 片头插入 PrependCover（issue #4） ----------
+
+// colorRatio 抽 at 秒的帧统计满足判定的像素占比（0~1）。
+func colorRatio(t *testing.T, ff *FFmpeg, video string, at float64, judge func(r, g, b uint32) bool) float64 {
+	t.Helper()
+	img := framePNG(t, ff, video, at, filepath.Join(outDir(t),
+		fmt.Sprintf("ratio_%s_%d.png", strings.ReplaceAll(filepath.Base(video), ".", "_"), int(at*1000))))
+	b := img.Bounds()
+	var n, hit int
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl := px(img, x, y)
+			n++
+			if judge(r, g, bl) {
+				hit++
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatalf("帧像素为空 %s@%.2fs", video, at)
+	}
+	return float64(hit) / float64(n)
+}
+
+// lavfi 的 green 是 (0,128,0)，yuv420p 往返后约 (0,126,0)；蓝底 G=64、
+// 红水印 G≈0，阈值 100 足以三色互斥
+func isGreen(r, g, b uint32) bool { return g > 100 && r < 50 && b < 50 }
+
+// greenCoverPNG 生成绿色封面（与红水印/蓝底三色互斥，断言互不干扰）。
+func greenCoverPNG(t *testing.T, ff *FFmpeg, w, h int) string {
+	t.Helper()
+	p := filepath.Join(outDir(t), fmt.Sprintf("green_%dx%d.png", w, h))
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-f", "lavfi", "-i", fmt.Sprintf("color=c=green:s=%dx%d", w, h),
+		"-frames:v", "1", "-y", p,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestApplyVideoFilters_Cover 首帧覆盖：首帧整幅被封面替换、第 2 帧起
+// 恢复原画面（enable='not(n)' 帧号边界），总时长不变。
+func TestApplyVideoFilters_Cover(t *testing.T) {
+	ff := testFF(t)
+	src := wmTestClip(t, ff) // 320x240 蓝底 10s
+	cover := wmRedPNG(t, ff, 320)
+	out := filepath.Join(outDir(t), "covered.mp4")
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Cover: &CoverOptions{Path: cover},
+	}, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertDuration(t, ff, out, 10.0, 0.3)
+	red := func(r, g, b uint32) bool { return isRed(r, g, b) }
+	if got := colorRatio(t, ff, out, 0.0, red); got < 0.9 {
+		t.Fatalf("首帧红占比 %.2f，应约 1.0（封面未整幅覆盖）", got)
+	}
+	if got := colorRatio(t, ff, out, 0.5, red); got > 0.05 {
+		t.Fatalf("t=0.5s 红占比 %.2f，应约 0（第 2 帧起须恢复原画面）", got)
+	}
+}
+
+// TestApplyVideoFilters_CoverWithWatermark 封面在链尾：首帧纯净无水印，
+// 第 2 帧起水印正常出现——证明封面段在（水印与淡入淡出）之后执行。
+func TestApplyVideoFilters_CoverWithWatermark(t *testing.T) {
+	ff := testFF(t)
+	src := wmTestClip(t, ff)
+	cover := greenCoverPNG(t, ff, 320, 240)
+	wm := wmRedPNG(t, ff, 80)
+	out := filepath.Join(outDir(t), "cover_wm.mp4")
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Watermark: &Watermark{Path: wm, Position: PosTopLeft},
+		Cover:     &CoverOptions{Path: cover},
+	}, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// 首帧：绿封面整幅、无红水印
+	if got := colorRatio(t, ff, out, 0.0, isGreen); got < 0.9 {
+		t.Fatalf("首帧绿封面占比 %.2f，应约 1.0", got)
+	}
+	if got := colorRatio(t, ff, out, 0.0, isRed); got > 0.05 {
+		t.Fatalf("首帧红水印占比 %.2f——封面帧不应带水印", got)
+	}
+	// 第 2 帧起：蓝底 + 红水印
+	if got := colorRatio(t, ff, out, 0.5, isRed); got < 0.02 {
+		t.Fatalf("t=0.5s 红水印占比 %.2f——水印应在封面之后正常出现", got)
+	}
+	if got := colorRatio(t, ff, out, 0.5, isGreen); got > 0.05 {
+		t.Fatalf("t=0.5s 绿占比 %.2f，封面应只影响首帧", got)
+	}
+}
+
+// TestApplyVideoFilters_CoverFitModes 封面适配三种模式 + 链后尺寸推导：
+// 方图封面进 320x240（4:3）画面——crop 铺满无黑边、pad 补黑边、
+// stretch 拉伸铺满；Fit 链下封面适配目标 = Fit 后画布。
+func TestApplyVideoFilters_CoverFitModes(t *testing.T) {
+	ff := testFF(t)
+	src := wmTestClip(t, ff) // 320x240
+	square := greenCoverPNG(t, ff, 200, 200)
+
+	for _, tc := range []struct {
+		name     string
+		fit      FitMode
+		wantBars bool
+	}{
+		{"crop", FitCrop, false},
+		{"pad", FitPad, true},
+		{"stretch", FitStretch, false},
+	} {
+		out := filepath.Join(outDir(t), "coverfit_"+tc.name+".mp4")
+		if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+			Cover: &CoverOptions{Path: square, Fit: tc.fit},
+		}, out, EncodeOptions{}); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		img := framePNG(t, ff, out, 0.0, filepath.Join(outDir(t), "coverfit_"+tc.name+".png"))
+		// 方图进 4:3 画面：pad 左右补黑边，crop/stretch 铺满
+		assertEdgeBlack(t, img, 120, tc.wantBars)
+		if got := colorRatio(t, ff, out, 0.5, isGreen); got > 0.05 {
+			t.Fatalf("%s: 封面应只影响首帧", tc.name)
+		}
+	}
+
+	// Fit 链：封面适配目标 = Fit 后的 640x480（而非原始 320x240）
+	out := filepath.Join(outDir(t), "coverfit_canvas.mp4")
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Fit:   &FitOptions{Width: 640, Height: 480},
+		Cover: &CoverOptions{Path: wmRedPNG(t, ff, 320)},
+	}, out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 640 || info.Video.Height != 480 {
+		t.Fatalf("Fit 后应 640x480，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+	if got := colorRatio(t, ff, out, 0.0, isRed); got < 0.9 {
+		t.Fatalf("Fit 链首帧红占比 %.2f——封面须适配到链后画布（640x480）", got)
+	}
+}
+
+// TestPrependCover 片头插入静帧：时长精确增加 frames/fps、开头封面/
+// 尾部原画面、音画起点对齐、无音轨输入正常出片。
+func TestPrependCover(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	src := wmTestClip(t, ff) // 320x240@10fps 10s，无音轨（lavfi color）
+	cover := wmRedPNG(t, ff, 320)
+
+	// 1) 有音轨源：先给蓝底配一段正弦音（44100 立体声），插入 20 帧=2s
+	srcAudio := filepath.Join(dir, "blue10s_a.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-i", src,
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+		"-map", "0:v", "-map", "1:a", "-c:v", "copy", "-shortest", "-y", srcAudio,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "prepended.mp4")
+	if err := ff.PrependCover(srcAudio, CoverOptions{Path: cover}, 20, out, EncodeOptions{}); err != nil {
+		t.Fatalf("片头插入应成功: %v", err)
+	}
+	assertFileExists(t, out)
+	// 10 + 20/10 = 12s
+	assertDuration(t, ff, out, 12.0, 0.4)
+	if got := colorRatio(t, ff, out, 1.0, isRed); got < 0.9 {
+		t.Fatalf("t=1.0s（插入段内）红占比 %.2f，应约 1.0", got)
+	}
+	if got := colorRatio(t, ff, out, 3.0, isRed); got > 0.05 {
+		t.Fatalf("t=3.0s（原内容段）红占比 %.2f，应约 0", got)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasAudio {
+		t.Fatal("源有音轨，成片应有音轨")
+	}
+	// 音画起点对齐：音频与视频总长一致（±0.2s，约 2 帧）
+	if d := info.Audio.Duration - info.Duration; d < -0.2 || d > 0.2 {
+		t.Fatalf("音画时长未对齐：video=%.2fs audio=%.2fs", info.Duration, info.Audio.Duration)
+	}
+
+	// 2) frames 零值兜底 15 帧
+	out2 := filepath.Join(dir, "prepended_default.mp4")
+	if err := ff.PrependCover(srcAudio, CoverOptions{Path: cover}, 0, out2, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertDuration(t, ff, out2, 11.5, 0.4)
+
+	// 3) 无音轨源：成片同样无音轨
+	out3 := filepath.Join(dir, "prepended_silent.mp4")
+	if err := ff.PrependCover(src, CoverOptions{Path: cover, Fit: FitPad}, 20, out3, EncodeOptions{}); err != nil {
+		t.Fatalf("无音轨源的片头插入应成功: %v", err)
+	}
+	info3, err := ff.Probe(out3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info3.HasAudio {
+		t.Fatal("无音轨源成片不应有音轨")
+	}
+	assertDuration(t, ff, out3, 12.0, 0.4)
+}
+
+// TestCoverValidation 封面参数的入口校验（不执行 ffmpeg）。
+func TestCoverValidation(t *testing.T) {
+	ff := testFF(t)
+	out := filepath.Join(outDir(t), "bad.mp4")
+	// Path 为空
+	if err := ff.ApplyVideoFilters("whatever.mp4", VideoFilterChain{
+		Cover: &CoverOptions{Fit: FitCrop},
+	}, out, EncodeOptions{}); err == nil {
+		t.Fatal("封面路径为空应报错")
+	}
+	// Fit 非法
+	if err := ff.ApplyVideoFilters("whatever.mp4", VideoFilterChain{
+		Cover: &CoverOptions{Path: "x.png", Fit: FitMode("diagonal")},
+	}, out, EncodeOptions{}); err == nil {
+		t.Fatal("封面适配模式非法应报错")
+	}
+	if err := ff.PrependCover("whatever.mp4", CoverOptions{Path: "x.png", Fit: FitMode("x")}, 10, out, EncodeOptions{}); err == nil {
+		t.Fatal("PrependCover 适配模式非法应报错")
+	}
+}
+

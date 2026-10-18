@@ -99,6 +99,94 @@ func (f *FFmpeg) AddWatermark(input string, wm Watermark, opacity float64, outpu
 	return err
 }
 
+// PrependCover 在片头插入封面静帧：总时长增加 frames 帧（库内按探测
+// 帧率换算时长，调用方不感知 fps），原内容一帧不少。封面按主画面
+// 原始尺寸适配（CoverOptions.Fit，语义与画布适配一致）。
+// frames <=0 默认 15（约半秒）。封面段与原视频经 filter_complex 一次
+// 编码拼接（单遍出片，规避分段编码参数不一致的花屏）。有音轨时插入
+// 段以 anullsrc 垫等长静音（采样率/声道与源对齐）保持音画起点对齐；
+// 源无音轨则成片同样无音轨。
+// 与 VideoFilterChain.Cover（首帧覆盖，时长不变）互补：需要"封面停留
+// 一段时间"用本方法，需要"只换首帧"用组合链的 Cover。
+// Since v1.3.0.
+func (f *FFmpeg) PrependCover(input string, cover CoverOptions, frames int, output string, enc EncodeOptions) error {
+	if err := cover.validate(); err != nil {
+		return err
+	}
+	if frames <= 0 {
+		frames = 15
+	}
+	info, err := f.Probe(input)
+	if err != nil {
+		return fmt.Errorf("探测输入失败: %w", err)
+	}
+	if !info.HasVideo {
+		return fmt.Errorf("输入没有视频流: %s", input)
+	}
+	w, h := info.Video.Width, info.Video.Height
+	fps := info.Video.FrameRate
+	if fps <= 0 || fps > 240 {
+		fps = 30
+	}
+	dur := float64(frames) / fps
+
+	fc, err := fitFilterChain(w, h, cover.Fit, cover.PadColor)
+	if err != nil {
+		return err
+	}
+
+	// 封面输入侧成帧（-loop 1 + -framerate + -t ≈ frames 帧），滤镜内
+	// 适配到主画面尺寸；两段统一时基/像素格式后 concat——concat 的
+	// 硬性要求，缺一个都会 "Input link ... parameters do not match"
+	args := []string{"-i", input,
+		"-loop", "1", "-framerate", fmt.Sprintf("%.6f", fps),
+		"-t", fmt.Sprintf("%.6f", dur), "-i", cover.Path}
+	var parts []string
+	parts = append(parts, fmt.Sprintf("[1:v]%s,setsar=1,format=yuv420p,settb=AVTB[cv]", fc))
+	parts = append(parts, "[0:v]format=yuv420p,settb=AVTB[vm]")
+	parts = append(parts, "[cv][vm]concat=n=2:v=1:a=0[v]")
+	maps := []string{"-map", "[v]"}
+	if info.HasAudio {
+		cl, err := channelLayout(info.Audio.Channels)
+		if err != nil {
+			return err
+		}
+		// 静音垫与源音频对齐采样率/声道/时基后 concat，音画起点一致
+		sr := info.Audio.SampleRate
+		if sr <= 0 {
+			sr = 44100
+		}
+		parts = append(parts, fmt.Sprintf(
+			"anullsrc=r=%d:cl=%s,atrim=duration=%.6f,aformat=sample_fmts=fltp:sample_rates=%d:channel_layouts=%s,asettb=AVTB[cs]",
+			sr, cl, dur, sr, cl))
+		parts = append(parts, "[0:a]aformat=sample_fmts=fltp:sample_rates="+itoa(sr)+":channel_layouts="+cl+",asettb=AVTB[am]")
+		parts = append(parts, "[cs][am]concat=n=2:v=0:a=1[a]")
+		maps = []string{"-map", "[v]", "-map", "[a]"}
+	}
+	args = append(args, "-filter_complex", strings.Join(parts, ";"))
+	args = append(args, maps...)
+	args = append(args, enc.outputArgs()...)
+	args = append(args, output)
+	_, err = f.run(f.ffmpegBin(), args)
+	return err
+}
+
+// channelLayout 声道数 → ffmpeg 布局名（PrependCover 垫静音对齐用；
+// 覆盖视频常见的 1/2/6/8 声道，罕见布局明确报错而不是垫错布局）。
+func channelLayout(n int) (string, error) {
+	switch n {
+	case 1:
+		return "mono", nil
+	case 2:
+		return "stereo", nil
+	case 6:
+		return "5.1", nil
+	case 8:
+		return "7.1", nil
+	}
+	return "", fmt.Errorf("不支持 %d 声道的静音垫底（常见为 1/2/6/8 声道）", n)
+}
+
 // BurnSubtitle 烧制硬字幕（把字幕渲染进画面，无需播放器支持）。
 // 支持 srt/ass 等 ffmpeg 可识别的字幕格式；字体/样式由字幕文件自身决定。
 func (f *FFmpeg) BurnSubtitle(input, subtitle string, output string, enc EncodeOptions) error {

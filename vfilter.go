@@ -22,21 +22,52 @@ type FitOptions struct {
 	Color string
 }
 
+// CoverOptions 片头封面图参数，首帧覆盖（VideoFilterChain.Cover）与
+// 片头插入（PrependCover）共用。封面与主画面宽高比不一致时按 Fit
+// 适配（语义与画布适配一致，不引入新概念）。
+// Since v1.3.0.
+type CoverOptions struct {
+	// Path 封面图片路径（jpg/png 等 ffmpeg 可识别格式）
+	Path string
+	// Fit 适配方式，零值 = FitCrop（裁剪填满）；FitPad 时补 PadColor 边
+	Fit FitMode
+	// PadColor Fit=pad 的补边颜色，颜色名或 #RRGGBB；空 = black
+	PadColor string
+}
+
+// validate 校验封面参数（Fit 复用画布适配的枚举校验）。
+func (c *CoverOptions) validate() error {
+	if c == nil {
+		return nil
+	}
+	if c.Path == "" {
+		return fmt.Errorf("封面图片路径不能为空")
+	}
+	if err := validateFitMode(c.Fit); err != nil {
+		return fmt.Errorf("封面适配模式非法: %w", err)
+	}
+	return nil
+}
+
 // VideoFilterChain 一组可叠加的画面处理，ApplyVideoFilters 会把启用的
 // 项目合成一条滤镜链，一次编码完成全部（相比逐项多次调用：少几遍
 // 重编码、画质无损叠加、速度快数倍）。
 //
-// 处理顺序固定为：裁剪 → 旋转 → 适配画布 → 淡入淡出(视频) → 字幕 → 水印。
-// 裁剪在旋转之前（坐标按原始画面定义，先旋转会让宽高互换、坐标全部错位）；
-// 适配画布放在旋转之后，这样"先转正再塞进竖屏/横屏画布"能一次做完；
-// 字幕在裁剪与适配之后渲染避免被裁掉；水印最后叠加保证在最上层。
+// 处理顺序固定为：裁剪 → 旋转 → 适配画布 → 字幕 → 水印 → 淡入淡出 →
+// 封面覆盖。裁剪在旋转之前（坐标按原始画面定义，先旋转会让宽高互换、
+// 坐标全部错位）；适配画布放在旋转之后，这样"先转正再塞进竖屏/横屏
+// 画布"能一次做完；字幕在裁剪与适配之后渲染避免被裁掉；水印在水印位
+// 叠加保证在最上层；淡入淡出恒在链尾作用于成片整体（水印与字幕随
+// 画面一起变暗，见 issue #2）；封面覆盖是真正的最后一步——只替换首帧，
+// 不带水印、不受淡入淡出影响（见 issue #4）。
 type VideoFilterChain struct {
-	Crop      *CropRect    // nil = 不裁剪
-	Rotate    Rotation     // "" = 不旋转
-	Fit       *FitOptions  // nil = 不适配画布（保持裁剪/旋转后的原始尺寸）
-	Watermark *Watermark   // nil = 不加水印；Opacity 字段生效（0~1）
-	Subtitle  string       // 字幕文件路径（srt/ass），空 = 不加
-	Fade      *FadeOptions // nil = 无淡入淡出（仅 VideoIn/VideoOut 参与视频，AudioIn/Out 参与音频）
+	Crop      *CropRect     // nil = 不裁剪
+	Rotate    Rotation      // "" = 不旋转
+	Fit       *FitOptions   // nil = 不适配画布（保持裁剪/旋转后的原始尺寸）
+	Watermark *Watermark    // nil = 不加水印；Opacity 字段生效（0~1）
+	Subtitle  string        // 字幕文件路径（srt/ass），空 = 不加
+	Fade      *FadeOptions  // nil = 无淡入淡出（仅 VideoIn/VideoOut 参与视频，AudioIn/Out 参与音频）
+	Cover     *CoverOptions // nil = 不覆盖首帧；Since v1.3.0
 
 	// audioFade 由内部在 Probe 后填充（afade 表达式），调用方无需设置
 	audioFade string
@@ -52,6 +83,9 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 		return fmt.Errorf("适配画布宽高必须为正数: %dx%d", chain.Fit.Width, chain.Fit.Height)
 	}
 	if err := validateWatermark(chain.Watermark); err != nil {
+		return err
+	}
+	if err := chain.Cover.validate(); err != nil {
 		return err
 	}
 
@@ -116,72 +150,87 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 	}
 
 	var args []string
-	if wm := chain.Watermark; wm != nil && wm.Path != "" {
-		// 水印需要第二输入，走 filter_complex：
-		//   [0:v] 视频链 [v0]；半透明时 [1:v] 透明度处理 [w] 再 overlay，
-		//   不透明时直接 [v0][1:v]overlay。
-		// 注意 label 直连（如 "[1:v][w]"）是非法 filter_graph——此前
-		// 纯水印（视频链为空）与 opacity=1（无透明度滤镜）都会拼出
-		// 空段，ffmpeg 报 "Filter not found"。
-		args = append(args, "-i", input, "-i", wm.Path)
-		// filter_graph 分段组装（段间以 ";" 连接；不允许任何空段——
-		// label 直连与空前导分号都会让 ffmpeg 报 "No such filter"）
+	hasCover := chain.Cover != nil && chain.Cover.Path != ""
+	if wm := chain.Watermark; wm != nil && wm.Path != "" || hasCover {
+		// 水印与封面都需要额外输入，走 filter_complex：
+		//   [0:v] 视频链 [v0]；水印段；fade 段；封面段——依次推进链尾
+		//   label，最后一段输出 [v]。两段都启用时水印图是 1 号输入、
+		//   封面图 2 号；无水印时封面图是 1 号。
+		// 注意 label 直连（如 "[1:v][w]"）是非法 filter_graph——空段
+		// 会让 ffmpeg 报 "Filter not found"（见 v1.0 回归注释）。
+		args = append(args, "-i", input)
+		coverIdx := 1
 		var parts []string
-		main := "[0:v]"
+		cur := "[0:v]"
 		if len(vf) > 0 {
 			parts = append(parts, "[0:v]"+strings.Join(vf, ",")+"[v0]")
-			main = "[v0]"
+			cur = "[v0]"
 		}
-		// fade 恒在链尾作用于成片整体：水印（与 vf 里的字幕）都在 fade
-		// 之前叠加/烧制，淡出时随画面一起变暗消失（见 issue #2——
-		// 此前 fade 在主画面段，淡出时水印保持鲜亮）。
-		wmOut := "[v]"
-		if len(fadeExprs) > 0 {
-			wmOut = "[vm]"
-		}
-		if wm.Position == PosTile {
-			// 平铺格子宽度按主画面 1/4 计，需要先探测
-			info, err := probeOnce()
-			if err != nil {
-				return err
+		if wm := chain.Watermark; wm != nil && wm.Path != "" {
+			args = append(args, "-i", wm.Path)
+			coverIdx = 2
+			// 后面还有 fade 或封面时用中间 label，否则直接输出 [v]
+			next := "[v]"
+			if len(fadeExprs) > 0 || hasCover {
+				next = "[vm]"
 			}
-			segs, err := watermarkTileSegments(main, "[1:v]", wmOut,
-				tileCellWidth(info.Video.Width), wm.Opacity, wm.TileGap)
-			if err != nil {
-				return err
-			}
-			parts = append(parts, segs...)
-		} else {
-			// ScalePct 的主画面宽按链序推导：水印叠加在全部主画面滤镜
-			// 之后，它看到的是链尾画面宽——Fit 画布 > 裁剪+旋转换算 >
-			// 探测原始宽。这套几何规则只有库知道，调用方只传语义百分比。
-			mainW := 0
-			if wm.ScalePct > 0 {
-				switch {
-				case chain.Fit != nil:
-					mainW = chain.Fit.Width
-				case chain.Crop != nil:
-					// 裁剪在旋转之前（见上方链序说明）：旋转 90°/270° 后宽高互换
-					mainW = chain.Crop.W
-					if chain.Rotate == Rot90CW || chain.Rotate == Rot90CCW {
-						mainW = chain.Crop.H
-					}
-				default:
-					info, err := probeOnce()
+			if wm.Position == PosTile {
+				// 平铺格子宽度按主画面 1/4 计，需要先探测
+				info, err := probeOnce()
+				if err != nil {
+					return err
+				}
+				segs, err := watermarkTileSegments(cur, "[1:v]", next,
+					tileCellWidth(info.Video.Width), wm.Opacity, wm.TileGap)
+				if err != nil {
+					return err
+				}
+				parts = append(parts, segs...)
+			} else {
+				// ScalePct 的主画面宽按链序推导（见 effectiveMainSize）
+				mainW := 0
+				if wm.ScalePct > 0 {
+					w, _, err := effectiveMainSize(&chain, probeOnce)
 					if err != nil {
 						return err
 					}
-					mainW = info.Video.Width
+					mainW = w
 				}
+				segs, err := watermarkSegments(cur, "[1:v]", next, wm, wm.Opacity, mainW)
+				if err != nil {
+					return err
+				}
+				parts = append(parts, segs...)
 			}
-			segs, err := watermarkSegments(main, "[1:v]", wmOut, wm, wm.Opacity, mainW)
+			cur = next
+		}
+		if len(fadeExprs) > 0 {
+			// fade 作用于到此时为止的成片整体（水印与其前的字幕都在
+			// 其中，见 issue #2）；封面在其后，不受淡入影响
+			next := "[v]"
+			if hasCover {
+				next = "[vf]"
+			}
+			parts = append(parts, cur+strings.Join(fadeExprs, ",")+next)
+			cur = next
+		}
+		if hasCover {
+			// 封面覆盖是链尾最后一步：适配到链后有效画面尺寸后整幅盖在
+			// 首帧上（n=0），第 2 帧起恢复原画面——帧号表达式不依赖
+			// 帧率探测，变帧率视频天然稳定（enable 的 n 在 ffmpeg 4.4
+			// 与 8.x 均可用，实测验证）
+			args = append(args, "-i", chain.Cover.Path)
+			w, h, err := effectiveMainSize(&chain, probeOnce)
 			if err != nil {
 				return err
 			}
-			parts = append(parts, segs...)
-		}
-		if len(fadeExprs) > 0 {
-			parts = append(parts, wmOut+strings.Join(fadeExprs, ",")+"[v]")
+			fc, err := fitFilterChain(w, h, chain.Cover.Fit, chain.Cover.PadColor)
+			if err != nil {
+				return err
+			}
+			parts = append(parts, fmt.Sprintf("[%d:v]%s,setsar=1[cv]", coverIdx, fc))
+			parts = append(parts, fmt.Sprintf("%s[cv]overlay=x=0:y=0:enable='not(n)'[v]", cur))
+			cur = "[v]"
 		}
 		args = append(args, "-filter_complex", strings.Join(parts, ";"), "-map", "[v]", "-map", "0:a:0?")
 	} else {
@@ -216,6 +265,30 @@ func rotateExpr(r Rotation) (string, error) {
 		return "vflip", nil
 	default:
 		return "", fmt.Errorf("未知旋转类型: %q", string(r))
+	}
+}
+
+// effectiveMainSize 推导链后（水印缩放/封面适配时刻）的主画面有效尺寸。
+// ApplyVideoFilters 的链序是 裁剪→旋转→适配画布：Fit 启用时画布尺寸即
+// 有效尺寸；仅裁剪时裁出的区域经 90°/270° 旋转宽高互换（Rot180/翻转
+// 不换）；都无则保持原始尺寸（需探测）。这套几何规则只有库知道，
+// ScalePct（v1.2.0）与 Cover（v1.3.0）共用，调用方不感知。
+// probeOnce 为懒探测（仅无链尺寸变换时调用），错误原样上抛。
+func effectiveMainSize(chain *VideoFilterChain, probeOnce func() (*ProbeResult, error)) (w, h int, err error) {
+	switch {
+	case chain.Fit != nil:
+		return chain.Fit.Width, chain.Fit.Height, nil
+	case chain.Crop != nil:
+		if chain.Rotate == Rot90CW || chain.Rotate == Rot90CCW {
+			return chain.Crop.H, chain.Crop.W, nil
+		}
+		return chain.Crop.W, chain.Crop.H, nil
+	default:
+		info, err := probeOnce()
+		if err != nil {
+			return 0, 0, err
+		}
+		return info.Video.Width, info.Video.Height, nil
 	}
 }
 
