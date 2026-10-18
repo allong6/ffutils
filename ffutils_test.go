@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -2846,6 +2847,248 @@ func TestCoverValidation(t *testing.T) {
 	}
 	if err := ff.PrependCover("whatever.mp4", CoverOptions{Path: "x.png", Fit: FitMode("x")}, 10, out, EncodeOptions{}); err == nil {
 		t.Fatal("PrependCover 适配模式非法应报错")
+	}
+}
+
+// ---------- 清晰增强 Enhance + 图片序列重组 FramesToVideo（issue #5） ----------
+
+// edgeSharpness 穿越画面中心的水平线上相邻像素亮度差最大值：边缘越
+// 陡该值越大（模糊让过渡平缓、锐化让边缘收紧）——增强效果的机器探针。
+func edgeSharpness(img image.Image) float64 {
+	b := img.Bounds()
+	y := b.Min.Y + b.Dy() / 2
+	luma := func(x int) float64 {
+		r, g, bl := px(img, x, y)
+		return 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(bl)
+	}
+	var maxStep float64
+	for x := b.Min.X; x < b.Max.X-1; x++ {
+		if d := math.Abs(luma(x+1) - luma(x)); d > maxStep {
+			maxStep = d
+		}
+	}
+	return maxStep
+}
+
+// TestApplyVideoFilters_Enhance 清晰增强：模糊源的边缘经锐化变陡
+//（边缘梯度上升）、Scale 放大分辨率翻倍且宽高比不变、Fit 与 Scale
+// 叠加、与水印同链正常出片。
+func TestApplyVideoFilters_Enhance(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	// 灰底 + 居中红方块的源（边缘探针），先模糊得到"待增强"素材
+	src := filepath.Join(dir, "enh_src.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-f", "lavfi", "-i", "color=c=gray:s=320x240:r=10:d=2",
+		"-vf", "drawbox=x=110:y=70:w=100:h=100:color=red:t=fill",
+		"-g", "1", "-pix_fmt", "yuv420p", "-y", src,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	blurred := filepath.Join(dir, "enh_blurred.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-i", src, "-vf", "gblur=sigma=3", "-c:a", "copy", "-y", blurred,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1) 锐化（Scale=1，尺寸不变）：边缘梯度显著上升
+	sharp := filepath.Join(dir, "enh_sharp.mp4")
+	if err := ff.ApplyVideoFilters(blurred, VideoFilterChain{
+		Enhance: &EnhanceOptions{Strength: 2},
+	}, sharp, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	base := edgeSharpness(framePNG(t, ff, blurred, 1.0, filepath.Join(dir, "blurred.png")))
+	got := edgeSharpness(framePNG(t, ff, sharp, 1.0, filepath.Join(dir, "sharp.png")))
+	t.Logf("边缘梯度：模糊 %.1f → 锐化 %.1f", base, got)
+	if got < base*1.3 {
+		t.Fatalf("锐化后边缘梯度 %.1f 应显著高于模糊源 %.1f", got, base)
+	}
+	info, err := ff.Probe(sharp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 320 || info.Video.Height != 240 {
+		t.Fatalf("Scale=1 尺寸应不变，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+
+	// 2) Scale=2：分辨率翻倍、宽高比不变
+	upscaled := filepath.Join(dir, "enh_2x.mp4")
+	if err := ff.ApplyVideoFilters(blurred, VideoFilterChain{
+		Enhance: &EnhanceOptions{Strength: 1, Scale: 2},
+	}, upscaled, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err = ff.Probe(upscaled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 640 || info.Video.Height != 480 {
+		t.Fatalf("Scale=2 应放大到 640x480，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+
+	// 3) Fit 与 Scale 叠加：Fit 定基准、Scale 在其上放大
+	both := filepath.Join(dir, "enh_fit2x.mp4")
+	if err := ff.ApplyVideoFilters(blurred, VideoFilterChain{
+		Fit:     &FitOptions{Width: 640, Height: 480},
+		Enhance: &EnhanceOptions{Scale: 2},
+	}, both, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err = ff.Probe(both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 1280 || info.Video.Height != 960 {
+		t.Fatalf("Fit 640x480 + Scale=2 应输出 1280x960，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+
+	// 4) 与水印同链：增强在字幕/水印之前，红水印正常叠加在最上层
+	wmChain := filepath.Join(dir, "enh_wm.mp4")
+	wm := wmRedPNG(t, ff, 60)
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Enhance:   &EnhanceOptions{Strength: 2},
+		Watermark: &Watermark{Path: wm, Position: PosTopLeft},
+	}, wmChain, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	found, fx, fy, _ := redBoxStats(t, ff, wmChain, 1.0)
+	if !found {
+		t.Fatal("增强链上的红水印未检出")
+	}
+	if fx > 0.5 || fy > 0.5 {
+		t.Fatalf("红水印应在左上角（%.2f,%.2f）", fx, fy)
+	}
+
+	// 5) 校验：非法 Scale / Strength
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Enhance: &EnhanceOptions{Scale: 3},
+	}, filepath.Join(dir, "x.mp4"), EncodeOptions{}); err == nil {
+		t.Fatal("Scale=3 应报错")
+	}
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Enhance: &EnhanceOptions{Strength: 5},
+	}, filepath.Join(dir, "x.mp4"), EncodeOptions{}); err == nil {
+		t.Fatal("Strength=5 应报错")
+	}
+}
+
+// countFrames 用 ffprobe -count_frames 精确统计视频帧数（帧数守恒断言）。
+func countFrames(t *testing.T, ff *FFmpeg, path string) int {
+	t.Helper()
+	out, err := ff.run(ff.ffprobeBin(), []string{
+		"-v", "error", "-select_streams", "v:0", "-count_frames",
+		"-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", path,
+	})
+	if err != nil {
+		t.Fatalf("统计帧数失败 %s: %v", path, err)
+	}
+	return atoiSafe(strings.TrimSpace(string(out)))
+}
+
+// TestFramesToVideo 图片序列重组：帧数守恒（100 张进 → 100 帧）、
+// 时长 = N/fps、分辨率 = 图尺寸、音轨回填对齐、两块重组片 Concat(copy)
+// 帧数相加（AI 放大管线的分块拼接口径）。
+func TestFramesToVideo(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+
+	// 100 张 320x240 蓝 PNG（前 50 蓝后 50 绿，供拼接后内容顺序断言）
+	seqDir := filepath.Join(dir, "seq")
+	if err := os.MkdirAll(seqDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i, color := range []string{"0x204080", "green"} {
+		seg := filepath.Join(dir, "seg_"+color)
+		if err := os.MkdirAll(seg, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ff.run(ff.ffmpegBin(), []string{
+			"-f", "lavfi", "-i", fmt.Sprintf("color=c=%s:s=320x240:r=10:d=5", color),
+			filepath.Join(seg, "f_%06d.png"), "-y",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := filepath.Glob(filepath.Join(seg, "*.png")); len(got) != 50 {
+			t.Fatalf("%s 生成的帧数 %d ≠ 50", color, len(got))
+		}
+		_ = i
+	}
+	blue := filepath.Join(dir, "seg_0x204080", "f_%06d.png")
+	green := filepath.Join(dir, "seg_green", "f_%06d.png")
+
+	// 1) 帧数守恒 + 时长 + 分辨率
+	out := filepath.Join(dir, "rebuilt.mp4")
+	if err := ff.FramesToVideo(blue, 10, "", out, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDuration(t, ff, out, 5.0, 0.15)
+	if n := countFrames(t, ff, out); n != 50 {
+		t.Fatalf("帧数守恒破坏：50 张图 → %d 帧", n)
+	}
+	if info.Video.Width != 320 || info.Video.Height != 240 {
+		t.Fatalf("分辨率应为图尺寸 320x240，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+
+	// 2) 音轨回填：等长音轨，音画时长对齐（±0.15s）
+	audio := filepath.Join(dir, "tone.wav")
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=5", "-y", audio,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	outA := filepath.Join(dir, "rebuilt_audio.mp4")
+	if err := ff.FramesToVideo(blue, 10, audio, outA, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	infoA, err := ff.Probe(outA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !infoA.HasAudio {
+		t.Fatal("传入音轨后成片应有音轨")
+	}
+	if d := infoA.Audio.Duration - infoA.Duration; d < -0.15 || d > 0.15 {
+		t.Fatalf("音画时长未对齐：video=%.2fs audio=%.2fs", infoA.Duration, infoA.Audio.Duration)
+	}
+
+	// 3) 分块拼接口径：蓝块 + 绿块各自重组，Concat(VideoCopy) 后
+	//    帧数相加、时长相加、内容顺序保持（前蓝后绿）
+	blkB := filepath.Join(dir, "blk_blue.mp4")
+	blkG := filepath.Join(dir, "blk_green.mp4")
+	if err := ff.FramesToVideo(blue, 10, "", blkB, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ff.FramesToVideo(green, 10, "", blkG, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	merged := filepath.Join(dir, "merged.mp4")
+	if err := ff.Concat([]string{blkB, blkG}, merged, EncodeOptions{VideoCodec: "copy"}); err != nil {
+		t.Fatalf("两块 copy 拼接应成功: %v", err)
+	}
+	assertDuration(t, ff, merged, 10.0, 0.3)
+	if n := countFrames(t, ff, merged); n != 100 {
+		t.Fatalf("两块拼接帧数 %d ≠ 100（分块口径丢帧）", n)
+	}
+	// 内容顺序：前半蓝、后半绿
+	if g := colorRatio(t, ff, merged, 1.0, isGreen); g > 0.1 {
+		t.Fatalf("t=1.0s 应仍是蓝块（绿占比 %.2f）", g)
+	}
+	if g := colorRatio(t, ff, merged, 8.0, isGreen); g < 0.8 {
+		t.Fatalf("t=8.0s 应是绿块（绿占比 %.2f）", g)
+	}
+
+	// 4) 校验：无匹配 pattern / fps 非法
+	if err := ff.FramesToVideo(filepath.Join(dir, "none_%06d.png"), 10, "", filepath.Join(dir, "x.mp4"), EncodeOptions{}); err == nil {
+		t.Fatal("无匹配文件应报错")
+	}
+	if err := ff.FramesToVideo(blue, 0, "", filepath.Join(dir, "x.mp4"), EncodeOptions{}); err == nil {
+		t.Fatal("fps=0 应报错")
 	}
 }
 

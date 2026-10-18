@@ -3,6 +3,7 @@ package ffutils
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -185,6 +186,51 @@ func channelLayout(n int) (string, error) {
 		return "7.1", nil
 	}
 	return "", fmt.Errorf("不支持 %d 声道的静音垫底（常见为 1/2/6/8 声道）", n)
+}
+
+// seqPlaceholderRe 图片序列 pattern 里的 printf 序号占位（%d / %06d 等）。
+var seqPlaceholderRe = regexp.MustCompile(`%0*\d*d`)
+
+// seqGlobPattern 把 printf 序号占位转成 glob 通配（%06d → *），仅用于
+// FramesToVideo 的存在性检查——glob 只能证明"有文件"，printf 序号的
+// 连续性由调用方保证（ffmpeg 读取时缺号会停在缺口处，行为由调用方
+// 的分块抽取流程约束）。
+func seqGlobPattern(p string) string {
+	return seqPlaceholderRe.ReplaceAllString(p, "*")
+}
+
+// FramesToVideo 把图片序列（pattern 如 dir/f_%06d.png）按帧率重组成
+// 视频——ExtractFrames 的逆向，AI 逐帧放大管线的重组步（分块抽帧 →
+// 外部工具放大该块 → 本方法统一编码重组 → 块间 Concat(VideoCopy)
+// 拼齐 → 音轨回填）。
+//
+// 帧数守恒：N 张图进、成片 N 帧（实测 -framerate 均匀时间戳 + 默认
+// 编码 1:1 传递，无需 passthrough 干预）。fps 必填，由调用方从源视频
+// 探测传入（如 ProbeResult.Video.FrameRate）；VFR 源由调用方按探测
+// 帧率转 CFR。
+//
+// audioPath 非空时以其音轨为成片音轨，编码走 EncodeOptions 既有语义
+// （零值 aac 重编码；要流拷贝传 AudioCopy——与 ReplaceAudio 等方法
+// 一致，不引入"此处零值=copy"的语义分叉）。空 = 无声成片。
+// pattern 无匹配文件报错（不静默出空片）。
+// Since v1.4.0.
+func (f *FFmpeg) FramesToVideo(pattern string, fps float64, audioPath string, output string, enc EncodeOptions) error {
+	if fps <= 0 {
+		return fmt.Errorf("帧率必须为正: %v", fps)
+	}
+	if matches, _ := filepath.Glob(seqGlobPattern(pattern)); len(matches) == 0 {
+		return fmt.Errorf("图片序列无匹配文件: %s", pattern)
+	}
+	args := []string{"-framerate", fmt.Sprintf("%.6f", fps), "-i", pattern}
+	if audioPath != "" {
+		args = append(args, "-i", audioPath, "-map", "0:v:0", "-map", "1:a:0")
+	} else {
+		args = append(args, "-map", "0:v:0")
+	}
+	args = append(args, enc.outputArgs()...)
+	args = append(args, output)
+	_, err := f.run(f.ffmpegBin(), args)
+	return err
 }
 
 // BurnSubtitle 烧制硬字幕（把字幕渲染进画面，无需播放器支持）。

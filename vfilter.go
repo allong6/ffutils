@@ -49,21 +49,74 @@ func (c *CoverOptions) validate() error {
 	return nil
 }
 
+// EnhanceOptions 清晰增强：降噪 → 高质量放大 → 锐化，一次编码完成
+// （快速增强档；真实细节的"补全"是外部 AI 引擎的事，见调用方管线）。
+// 内部顺序固定为 降噪在前（放大前的源噪点是伪影放大器）、锐化收尾，
+// 调用方只给开关语义，不感知滤镜顺序。
+// Since v1.4.0.
+type EnhanceOptions struct {
+	// Denoise 前置降噪（hqdn3d 固定预设），放大前抹掉源噪点
+	Denoise bool
+	// Strength 锐化强度档：1=轻 2=中 3=强；<=0 默认 1（轻）
+	Strength int
+	// Scale 放大倍率：1=不变、2/4=放大（lanczos 高质量插值，仅放大
+	// 不缩小），<=0 默认 1；1/2/4 以外的值报错。作用于 Fit 画布（若有）
+	// 之后的基准尺寸——Fit 定基准、Scale 在其上放大，两者叠加不互斥：
+	// Fit 640x480 + Scale=2 输出 1280x960。
+	Scale int
+}
+
+// enhanceFilterChain 生成清晰增强滤镜片段（降噪 → lanczos 放大 →
+// 锐化）。档位 → 滤镜参数的映射在此单一事实源（调用方产品层只传
+// 档位，与"前端不写死 ffmpeg 参数"的下游约定一致）：
+//
+//	降噪  hqdn3d=3:2:6:4（时空联合、轻量固定预设）
+//	锐化  unsharp 三档 0.8 / 1.5 / 2.2（5x5 邻域）
+//	放大  scale=iw*N:ih*N:flags=lanczos（N 为整数倍，恒偶数）
+func enhanceFilterChain(e *EnhanceOptions) (string, error) {
+	sc := e.Scale
+	if sc <= 0 {
+		sc = 1
+	}
+	if sc != 1 && sc != 2 && sc != 4 {
+		return "", fmt.Errorf("增强放大倍率 Scale=%d 非法（可选 1/2/4，仅放大不缩小）", e.Scale)
+	}
+	s := e.Strength
+	if s <= 0 {
+		s = 1
+	}
+	if s > 3 {
+		return "", fmt.Errorf("锐化强度 Strength=%d 超出范围（1~3）", e.Strength)
+	}
+	var parts []string
+	if e.Denoise {
+		parts = append(parts, "hqdn3d=3:2:6:4")
+	}
+	if e.Scale > 1 {
+		parts = append(parts, fmt.Sprintf("scale=iw*%d:ih*%d:flags=lanczos", e.Scale, e.Scale))
+	}
+	parts = append(parts, fmt.Sprintf("unsharp=5:5:%.1f", []float64{0.8, 1.5, 2.2}[s-1]))
+	return strings.Join(parts, ","), nil
+}
+
 // VideoFilterChain 一组可叠加的画面处理，ApplyVideoFilters 会把启用的
 // 项目合成一条滤镜链，一次编码完成全部（相比逐项多次调用：少几遍
 // 重编码、画质无损叠加、速度快数倍）。
 //
-// 处理顺序固定为：裁剪 → 旋转 → 适配画布 → 字幕 → 水印 → 淡入淡出 →
-// 封面覆盖。裁剪在旋转之前（坐标按原始画面定义，先旋转会让宽高互换、
-// 坐标全部错位）；适配画布放在旋转之后，这样"先转正再塞进竖屏/横屏
-// 画布"能一次做完；字幕在裁剪与适配之后渲染避免被裁掉；水印在水印位
-// 叠加保证在最上层；淡入淡出恒在链尾作用于成片整体（水印与字幕随
-// 画面一起变暗，见 issue #2）；封面覆盖是真正的最后一步——只替换首帧，
-// 不带水印、不受淡入淡出影响（见 issue #4）。
+// 处理顺序固定为：裁剪 → 旋转 → 适配画布 → 清晰增强 → 字幕 → 水印 →
+// 淡入淡出 → 封面覆盖。裁剪在旋转之前（坐标按原始画面定义，先旋转会让
+// 宽高互换、坐标全部错位）；适配画布放在旋转之后，这样"先转正再塞进
+// 竖屏/横屏画布"能一次做完；清晰增强在适配之后（作用于最终基准尺寸：
+// Fit 定基准、Scale 放大），且在字幕与水印之前——锐化字幕会产生毛边、
+// 放大会抬升水印噪点，增强不应作用于叠加层；字幕在裁剪与适配之后渲染
+// 避免被裁掉；水印在水印位叠加保证在最上层；淡入淡出恒在链尾作用于
+// 成片整体（水印与字幕随画面一起变暗，见 issue #2）；封面覆盖是真正的
+// 最后一步——只替换首帧，不带水印、不受淡入淡出影响（见 issue #4）。
 type VideoFilterChain struct {
 	Crop      *CropRect     // nil = 不裁剪
 	Rotate    Rotation      // "" = 不旋转
 	Fit       *FitOptions   // nil = 不适配画布（保持裁剪/旋转后的原始尺寸）
+	Enhance   *EnhanceOptions // nil = 不增强；Since v1.4.0
 	Watermark *Watermark    // nil = 不加水印；Opacity 字段生效（0~1）
 	Subtitle  string        // 字幕文件路径（srt/ass），空 = 不加
 	Fade      *FadeOptions  // nil = 无淡入淡出（仅 VideoIn/VideoOut 参与视频，AudioIn/Out 参与音频）
@@ -129,6 +182,15 @@ func (f *FFmpeg) ApplyVideoFilters(input string, chain VideoFilterChain, output 
 			return err
 		}
 		vf = append(vf, fc, "setsar=1")
+	}
+	if chain.Enhance != nil {
+		// 清晰增强在适配之后、字幕/水印之前（见链序注释）；内部顺序
+		// 降噪 → 放大 → 锐化（enhanceFilterChain 单一事实源）
+		ef, err := enhanceFilterChain(chain.Enhance)
+		if err != nil {
+			return err
+		}
+		vf = append(vf, ef)
 	}
 	// fade 表达式单独收集，恒排在链尾（作用于成片整体，见上方说明）。
 	var fadeExprs []string

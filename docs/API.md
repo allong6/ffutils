@@ -56,11 +56,12 @@
 
 | API | 说明 |
 |---|---|
-| `ApplyVideoFilters(input, chain, output, enc)` | 组合滤镜一次编码：裁剪（`CropRect`）→ 旋转 → 适配画布（`FitOptions`）→ 字幕 → 水印（`ScalePct`/`Motion` 自 v1.2.0 生效）→ 淡入淡出（成片整体）→ 首帧封面覆盖（`CoverOptions`，Since v1.3.0）（`VideoFilterChain`） |
+| `ApplyVideoFilters(input, chain, output, enc)` | 组合滤镜一次编码：裁剪（`CropRect`）→ 旋转 → 适配画布（`FitOptions`）→ 清晰增强（`EnhanceOptions`，Since v1.4.0）→ 字幕 → 水印（`ScalePct`/`Motion` 自 v1.2.0 生效）→ 淡入淡出（成片整体）→ 首帧封面覆盖（`CoverOptions`，Since v1.3.0）（`VideoFilterChain`） |
 | `Crop(input, x, y, w, h, output, enc)` | 画面裁剪 |
 | `Rotate(input, r, output, enc)` | 旋转/翻转（`Rotation`） |
 | `AddWatermark(input, wm, opacity, output, enc)` | 图片水印（`Watermark`；`Position` 含四角与平铺 PosTile，平铺可用 `TileGap` 格间透明间隔，Since v1.1.0；`ScalePct` 按主画面宽百分比缩放 + `Motion` 动态轨迹（rotate/bounce/drift），Since v1.2.0） |
 | `PrependCover(input, cover, frames, output, enc)` | 片头插入封面静帧：总时长增加 frames 帧、原内容一帧不少，音画起点对齐（`CoverOptions`，Since v1.3.0） |
+| `FramesToVideo(pattern, fps, audioPath, output, enc)` | 图片序列 → 视频（帧数守恒，`ExtractFrames` 的逆向，AI 逐帧放大管线的重组步；Since v1.4.0） |
 | `BurnSubtitle(input, subtitle, output, enc)` | 硬字幕（srt/ass） |
 | `FadeAV(input, opts, output, enc)` | 音视频淡入淡出（`FadeOptions`） |
 | `Reverse(input, output, enc)` | 整条倒放 |

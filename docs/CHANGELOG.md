@@ -13,7 +13,28 @@ ffutils 的全部功能更新、方法变更与废弃都记录在本文件，供
 
 ## Unreleased
 
-（暂无——下一次功能更新写在这里，发版时更名为版本号 + 日期。）
+### 新增
+
+- **`VideoFilterChain.Enhance`：清晰增强**（快速增强档，#5）。
+  `EnhanceOptions{Denoise, Strength, Scale}`：前置降噪（hqdn3d 固定
+  预设，放大前的源噪点是伪影放大器）→ lanczos 高质量放大 → 锐化
+  （unsharp 三档 0.8/1.5/2.2），一次编码完成；档位 → 滤镜参数的映射
+  在库内单一事实源，调用方产品层只传档位。链内位置：适配画布之后、
+  字幕与水印之前（增强作用于最终基准尺寸；锐化字幕会产生毛边、放大
+  会抬升水印噪点，故不作用于叠加层）。`Scale` 为 1/2/4（<=0 默认 1，
+  仅放大不缩小），与 `Fit` 叠加不互斥——Fit 定基准、Scale 在其上
+  放大（Fit 640x480 + Scale=2 → 1280x960）。`Strength` 1~3（<=0
+  默认 1）。Since v1.4.0.
+- **`FramesToVideo`：图片序列重组视频**（AI 超清管线的重组步，#5）——
+  `ExtractFrames` 的逆向。`FramesToVideo(pattern, fps, audioPath,
+  output, enc)`：N 张图按 fps 重组成视频，**帧数守恒**（N 张进 →
+  成片 N 帧，实测 -framerate 均匀时间戳 1:1 传递）；fps 必填由调用
+  方从源视频探测传入（VFR 源调用方转 CFR）；`audioPath` 非空时以其
+  音轨为成片音轨（编码走 EncodeOptions 既有语义，零值 aac、流拷贝传
+  `AudioCopy`），空 = 无声成片；pattern 无匹配文件报错（printf 序号
+  占位转 glob 做存在性检查，序号连续性由调用方分块流程保证）。
+  分块流水口径：分块抽帧 → 外部工具放大 → 本方法统一编码重组 →
+  块间 `Concat(VideoCopy)` 拼齐。Since v1.4.0.
 
 ## v1.3.0（2026-10-18）
 
