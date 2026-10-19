@@ -2,6 +2,7 @@ package ffutils
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -49,30 +50,65 @@ func (c *CoverOptions) validate() error {
 	return nil
 }
 
-// EnhanceOptions 清晰增强：降噪 → 高质量放大 → 锐化，一次编码完成
+// EnhanceOptions 清晰增强：修复/降噪 → 高质量放大 → 锐化，一次编码完成
 // （快速增强档；真实细节的"补全"是外部 AI 引擎的事，见调用方管线）。
 // 内部顺序固定为 降噪在前（放大前的源噪点是伪影放大器）、锐化收尾，
 // 调用方只给开关语义，不感知滤镜顺序。
 // Since v1.4.0.
 type EnhanceOptions struct {
-	// Denoise 前置降噪（hqdn3d 固定预设），放大前抹掉源噪点
+	// Denoise 前置降噪，放大前抹掉源噪点。V2=false 走 hqdn3d 固定预设
+	//（v1.4.0 行为）；V2=true 时兼容映射为轻档（DenoiseLevel=1）
 	Denoise bool
-	// Strength 锐化强度档：1=轻 2=中 3=强；<=0 默认 1（轻）
+	// Strength 锐化强度档：1=轻 2=中 3=强；<=0 默认 1（轻）。
+	// V2=false 映射 unsharp 0.8/1.5/2.2；V2=true 映射 cas 0.3/0.5/0.7
 	Strength int
-	// Scale 放大倍率：1=不变、2/4=放大（lanczos 高质量插值，仅放大
-	// 不缩小），<=0 默认 1；1/2/4 以外的值报错。作用于 Fit 画布（若有）
-	// 之后的基准尺寸——Fit 定基准、Scale 在其上放大，两者叠加不互斥：
+	// Scale 放大倍率：1=不变、2/4=放大（高质量插值，仅放大不缩小），
+	// <=0 默认 1；1/2/4 以外的值报错。作用于 Fit 画布（若有）之后的
+	// 基准尺寸——Fit 定基准、Scale 在其上放大，两者叠加不互斥：
 	// Fit 640x480 + Scale=2 输出 1280x960。
 	Scale int
+	// V2 启用 v2 内核：deblock+atadenoise 修复 → 放大 → cas 锐化。
+	// 零值 false 走 v1.4.0 旧链（hqdn3d → lanczos → unsharp），同参数
+	// 输出不变。v2 对加噪/低码率素材显著更优：atadenoise 时域自适应
+	//（逐帧闪变的当噪点、稳定的当细节，不抹纹理）、deblock 专治压缩
+	// 块效应、cas 对比度自适应锐化（平坦区轻锐不放大残噪、数学钳制
+	// 无白边），见 issue #6 调用方 A/B 实测。
+	// Since v1.5.0.
+	V2 bool
+	// DenoiseLevel 降噪档：0=未设置（默认，此时以 Denoise bool 为准）、
+	// 1=轻（atadenoise）、2=强（deblock + atadenoise）。非零优先于
+	// Denoise；Denoise=true 且 DenoiseLevel=0 兼容映射为 1。仅 V2 链
+	// 分档——旧链下非零只表示开启（hqdn3d 预设不分档）。越界（<0 或
+	// >2）报错。Since v1.5.0.
+	DenoiseLevel int
+	// Upscaler 放大插值方式：""或"lanczos"（默认，零值行为不变）、
+	// "nnedi"（神经网络边缘导向插值，边缘重建质量高于 lanczos，代价
+	// 是速度低约一个量级；仅支持倍增，需 Scale=2/4）。非法值报错。
+	// Since v1.5.0.
+	Upscaler string
+	// NnediWeights nnedi 权重文件路径（Upscaler="nnedi" 时必填），
+	// 缺失或文件不存在显式报错，不静默回退（调用方需要知道高档没
+	// 生效）。权重文件由调用方随资产分发——vapoursynth-nnedi3 的
+	// nnedi3_weights.bin，约 13.6 MB。Since v1.5.0.
+	NnediWeights string
 }
 
-// enhanceFilterChain 生成清晰增强滤镜片段（降噪 → lanczos 放大 →
-// 锐化）。档位 → 滤镜参数的映射在此单一事实源（调用方产品层只传
-// 档位，与"前端不写死 ffmpeg 参数"的下游约定一致）：
+// enhanceFilterChain 生成清晰增强滤镜片段（修复/降噪 → 放大 → 锐化）。
+// 档位 → 滤镜参数的映射在此单一事实源（调用方产品层只传档位，与
+// "前端不写死 ffmpeg 参数"的下游约定一致）：
 //
-//	降噪  hqdn3d=3:2:6:4（时空联合、轻量固定预设）
-//	锐化  unsharp 三档 0.8 / 1.5 / 2.2（5x5 邻域）
-//	放大  scale=iw*N:ih*N:flags=lanczos（N 为整数倍，恒偶数）
+//	v1 链（V2=false，v1.4.0 行为不变）
+//	  降噪  hqdn3d=3:2:6:4（时空联合、轻量固定预设）
+//	  放大  scale=iw*N:ih*N:flags=lanczos（N 为整数倍，恒偶数）
+//	  锐化  unsharp 三档 0.8 / 1.5 / 2.2（5x5 邻域）
+//	v2 链（V2=true，issue #6：加噪/低码率素材显著更优）
+//	  修复  1 档 atadenoise=0a=0:0b=0.04:0s=1.5；2 档前置 deblock。
+//	        atadenoise 阈值经实测调优：平坦时域噪声压制 ~87%（默认参数
+//	        仅 ~23%）；0a=0 让一切时变进入加权、静态结构零时变原样
+//	        保留（时域设计天然保细节），0s=1.5 控制加权衰减
+//	  放大  Upscaler=nnedi 时倍增（见 nnediUpscaleExpr），否则 lanczos 同 v1
+//	  锐化  cas 三档 0.3 / 0.5 / 0.7（对比度自适应，无过冲白边——
+//	        实测同源过冲像素约为 unsharp 链的 1/9）
 func enhanceFilterChain(e *EnhanceOptions) (string, error) {
 	sc := e.Scale
 	if sc <= 0 {
@@ -88,15 +124,82 @@ func enhanceFilterChain(e *EnhanceOptions) (string, error) {
 	if s > 3 {
 		return "", fmt.Errorf("锐化强度 Strength=%d 超出范围（1~3）", e.Strength)
 	}
+	dl := e.DenoiseLevel
+	if dl < 0 || dl > 2 {
+		return "", fmt.Errorf("降噪档 DenoiseLevel=%d 超出范围（0~2）", e.DenoiseLevel)
+	}
+	up := strings.ToLower(strings.TrimSpace(e.Upscaler))
+	switch up {
+	case "":
+		up = "lanczos"
+	case "lanczos", "nnedi":
+	default:
+		return "", fmt.Errorf("放大插值方式 Upscaler=%q 非法（可选 lanczos/nnedi）", e.Upscaler)
+	}
+	nnediW := ""
+	if up == "nnedi" {
+		if sc == 1 {
+			return "", fmt.Errorf("Upscaler=nnedi 需要放大倍率（Scale 可选 2/4，当前为 %d）", e.Scale)
+		}
+		if nnediW = strings.TrimSpace(e.NnediWeights); nnediW == "" {
+			return "", fmt.Errorf("Upscaler=nnedi 需要 NnediWeights 权重文件路径")
+		}
+		nnediW = filepath.Clean(nnediW)
+		if _, err := os.Stat(nnediW); err != nil {
+			return "", fmt.Errorf("nnedi 权重文件不可用: %w", err)
+		}
+	}
+	denoiseOn := dl > 0 || e.Denoise
+	if denoiseOn && dl == 0 {
+		dl = 1 // Denoise=true 兼容映射轻档；旧链不分档，仅表开启
+	}
 	var parts []string
-	if e.Denoise {
-		parts = append(parts, "hqdn3d=3:2:6:4")
+	if denoiseOn {
+		if e.V2 {
+			if dl >= 2 {
+				parts = append(parts, "deblock")
+			}
+			parts = append(parts, "atadenoise=0a=0:0b=0.04:0s=1.5")
+		} else {
+			parts = append(parts, "hqdn3d=3:2:6:4")
+		}
 	}
-	if e.Scale > 1 {
-		parts = append(parts, fmt.Sprintf("scale=iw*%d:ih*%d:flags=lanczos", e.Scale, e.Scale))
+	if sc > 1 {
+		if up == "nnedi" {
+			parts = append(parts, nnediUpscaleExpr(nnediW, sc)...)
+		} else {
+			parts = append(parts, fmt.Sprintf("scale=iw*%d:ih*%d:flags=lanczos", sc, sc))
+		}
 	}
-	parts = append(parts, fmt.Sprintf("unsharp=5:5:%.1f", []float64{0.8, 1.5, 2.2}[s-1]))
+	if e.V2 {
+		parts = append(parts, fmt.Sprintf("cas=strength=%.1f", []float64{0.3, 0.5, 0.7}[s-1]))
+	} else {
+		parts = append(parts, fmt.Sprintf("unsharp=5:5:%.1f", []float64{0.8, 1.5, 2.2}[s-1]))
+	}
 	return strings.Join(parts, ","), nil
+}
+
+// nnediUpscaleExpr 用 nnedi 做整数倍放大（sc=2 或 4）的滤镜片段。
+// ffmpeg 移植版 nnedi 是纯去隔行器——输出尺寸恒等于输入（源码
+// config_output 直接沿用输入 w/h，没有 VapourSynth 的 dh 倍高模式），
+// 倍增需借经典组合技巧：邻近采样把源行铺到偶数行、nnedi(field=t)
+// 保留偶数行（即源行）并用神经网络重建奇数行。nnedi 只作用于纵向，
+// 宽度方向借转置走同一流程再转回（transpose=1 + transpose=2 恒等，
+// 不改变画面方向）。sc=4 时倍增一次（2x）后 lanczos 放大到位——级联
+// 两遍 nnedi 是四遍神经网络过全片，代价过高，且边缘重建的价值集中
+// 在第一遍倍增。
+func nnediUpscaleExpr(weights string, sc int) []string {
+	w := subtitlePathExpr(weights)
+	base := []string{
+		fmt.Sprintf("scale=iw:ih*2:flags=neighbor,nnedi=weights='%s':field=t", w),
+		"transpose=1",
+		fmt.Sprintf("scale=iw:ih*2:flags=neighbor,nnedi=weights='%s':field=t", w),
+		"transpose=2",
+	}
+	if sc == 4 {
+		base = append(base, "scale=iw*2:ih*2:flags=lanczos")
+	}
+	return base
 }
 
 // VideoFilterChain 一组可叠加的画面处理，ApplyVideoFilters 会把启用的
@@ -369,7 +472,9 @@ func afadeExpr(duration float64, f *FadeOptions) string {
 	return strings.Join(parts, ",")
 }
 
-// subtitlePathExpr 字幕路径转义（盘符冒号、反斜杠、引号）。
+// subtitlePathExpr 滤镜表达式内嵌路径转义（盘符冒号、反斜杠、引号）：
+// 字幕（subtitles）与 nnedi 权重（nnedi weights）共用——凡是要嵌进
+// ffmpeg 滤镜串的文件路径都走这里（正斜杠 + 转义）。
 func subtitlePathExpr(p string) string {
 	s := strings.ReplaceAll(filepath.ToSlash(p), "\\", "/")
 	s = strings.ReplaceAll(s, ":", "\\:")

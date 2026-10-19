@@ -56,7 +56,7 @@
 
 | API | 说明 |
 |---|---|
-| `ApplyVideoFilters(input, chain, output, enc)` | 组合滤镜一次编码：裁剪（`CropRect`）→ 旋转 → 适配画布（`FitOptions`）→ 清晰增强（`EnhanceOptions`，Since v1.4.0）→ 字幕 → 水印（`ScalePct`/`Motion` 自 v1.2.0 生效）→ 淡入淡出（成片整体）→ 首帧封面覆盖（`CoverOptions`，Since v1.3.0）（`VideoFilterChain`） |
+| `ApplyVideoFilters(input, chain, output, enc)` | 组合滤镜一次编码：裁剪（`CropRect`）→ 旋转 → 适配画布（`FitOptions`）→ 清晰增强（`EnhanceOptions`，Since v1.4.0；v2 内核 `V2`（deblock+atadenoise→lanczos→cas）、降噪档 `DenoiseLevel`、nnedi 插值档 `Upscaler`/`NnediWeights` 自 v1.5.0）→ 字幕 → 水印（`ScalePct`/`Motion` 自 v1.2.0 生效）→ 淡入淡出（成片整体）→ 首帧封面覆盖（`CoverOptions`，Since v1.3.0）（`VideoFilterChain`） |
 | `Crop(input, x, y, w, h, output, enc)` | 画面裁剪 |
 | `Rotate(input, r, output, enc)` | 旋转/翻转（`Rotation`） |
 | `AddWatermark(input, wm, opacity, output, enc)` | 图片水印（`Watermark`；`Position` 含四角与平铺 PosTile，平铺可用 `TileGap` 格间透明间隔，Since v1.1.0；`ScalePct` 按主画面宽百分比缩放 + `Motion` 动态轨迹（rotate/bounce/drift），Since v1.2.0） |

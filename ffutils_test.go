@@ -2974,6 +2974,369 @@ func TestApplyVideoFilters_Enhance(t *testing.T) {
 	}
 }
 
+// ---------- 快速增强 v2：内核升级 + nnedi 插值档（issue #6） ----------
+
+// flatNoiseStddev 画面中央 1/3 区域的亮度标准差——时域噪声探针（噪声
+// 越大、逐像素波动越剧烈，stddev 越高）。降噪效果的机器断言用；避开
+// 边缘与水印位，只统计平坦区。
+func flatNoiseStddev(img image.Image) float64 {
+	b := img.Bounds()
+	x0, x1 := b.Min.X+b.Dx()/3, b.Max.X-b.Dx()/3
+	y0, y1 := b.Min.Y+b.Dy()/3, b.Max.Y-b.Dy()/3
+	var sum, sum2 float64
+	n := 0
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			r, g, bl := px(img, x, y)
+			l := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(bl)
+			sum += l
+			sum2 += l * l
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	mean := sum / float64(n)
+	return math.Sqrt(sum2/float64(n) - mean*mean)
+}
+
+// overshootCount 锐化过冲（白边/黑边）探针：统计 cand 中越过 ref 局部
+//（半径 8、步长 2 采样窗口）极值 ±8/255 的像素数。unsharp 卷积无钳制
+// 会产生过冲环，cas 数学钳制基本没有——v1/v2 锐化件的机器鉴别器。
+func overshootCount(ref, cand image.Image) int {
+	rb, cb := ref.Bounds(), cand.Bounds()
+	luma := func(img image.Image, b image.Rectangle, x, y int) float64 {
+		r, g, bl, _ := img.At(x, y).RGBA()
+		return 0.299*float64(r)/257 + 0.587*float64(g)/257 + 0.114*float64(bl)/257
+	}
+	var n int
+	for y := cb.Min.Y; y < cb.Max.Y; y++ {
+		for x := cb.Min.X; x < cb.Max.X; x++ {
+			lo, hi := 255.0, 0.0
+			for dy := -8; dy <= 8; dy += 2 {
+				for dx := -8; dx <= 8; dx += 2 {
+					xx, yy := x+dx, y+dy
+					if xx < rb.Min.X || xx >= rb.Max.X || yy < rb.Min.Y || yy >= rb.Max.Y {
+						continue
+					}
+					v := luma(ref, rb, xx, yy)
+					if v < lo {
+						lo = v
+					}
+					if v > hi {
+						hi = v
+					}
+				}
+			}
+			if c := luma(cand, cb, x, y); c > hi+8 || c < lo-8 {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// TestApplyVideoFilters_EnhanceV2 快速增强 v2 内核（issue #6）：时域噪点经
+// atadenoise 显著收敛（平坦区亮度方差探针）、Denoise bool 在 v2 链下兼容
+// 映射轻档、DenoiseLevel 在旧链下仅表开启、参数校验显式报错。v2 与 v1 的
+// 视觉质量对比（毛发纹理、白边、块效应修复）见真实素材组合用例 + REVIEW。
+func TestApplyVideoFilters_EnhanceV2(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	// 灰底 + 时域噪声（allf=t 逐帧随机，幅度对齐真实加噪素材）+ 有损
+	// 压缩：v2 靶向的加噪场景。码率须用 CRF 恒质量——-b:v 目标码率在
+	// 全 intra 下前帧过码、后帧被压平，噪声会逐帧衰减
+	src := filepath.Join(dir, "v2_src.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-f", "lavfi", "-i", "color=c=gray:s=320x240:r=10:d=2",
+		"-vf", "noise=alls=6:allf=t",
+		"-crf", "20", "-g", "1", "-pix_fmt", "yuv420p", "-y", src,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1) v2 强档修复（deblock+atadenoise）+ Scale=2：平坦区噪声显著收敛、
+	//    分辨率翻倍、时长守恒
+	v2 := filepath.Join(dir, "v2_full.mp4")
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Enhance: &EnhanceOptions{V2: true, DenoiseLevel: 2, Strength: 2, Scale: 2},
+	}, v2, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	base := flatNoiseStddev(framePNG(t, ff, src, 1.0, filepath.Join(dir, "src.png")))
+	got := flatNoiseStddev(framePNG(t, ff, v2, 1.0, filepath.Join(dir, "v2.png")))
+	t.Logf("平坦区噪声 stddev：源 %.1f → v2 %.1f", base, got)
+	if got > base*0.65 {
+		t.Fatalf("v2 降噪后平坦区噪声 %.1f 应显著低于源 %.1f", got, base)
+	}
+	info, err := ff.Probe(v2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 640 || info.Video.Height != 480 {
+		t.Fatalf("v2 Scale=2 应输出 640x480，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+	assertDuration(t, ff, v2, 2, 0.3)
+
+	// 2) Denoise bool 在 v2 链下兼容映射轻档（DenoiseLevel=0 时生效）
+	v2b := filepath.Join(dir, "v2_compat.mp4")
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Enhance: &EnhanceOptions{V2: true, Denoise: true, Strength: 1},
+	}, v2b, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ff.Probe(v2b); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3) 旧链（V2=false）下 DenoiseLevel 非零仅表开启：hqdn3d 预设不分档
+	v1 := filepath.Join(dir, "v2_v1chain.mp4")
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Enhance: &EnhanceOptions{DenoiseLevel: 2, Strength: 1},
+	}, v1, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 4) 校验显式报错（不静默回退）：DenoiseLevel 越界、Upscaler 非法值、
+	//    nnedi 缺倍率/缺权重/权重文件不存在
+	for name, opts := range map[string]*EnhanceOptions{
+		"DenoiseLevel=3":  {V2: true, DenoiseLevel: 3},
+		"DenoiseLevel=-1": {V2: true, DenoiseLevel: -1},
+		"Upscaler=xbr":    {V2: true, Upscaler: "xbr", Scale: 2},
+		"nnedi缺Scale":     {V2: true, Upscaler: "nnedi"},
+		"nnedi缺权重":       {V2: true, Upscaler: "nnedi", Scale: 2},
+		"nnedi权重不存在":    {V2: true, Upscaler: "nnedi", Scale: 2, NnediWeights: filepath.Join(dir, "no_such.bin")},
+	} {
+		if err := ff.ApplyVideoFilters(src, VideoFilterChain{Enhance: opts}, filepath.Join(dir, "x.mp4"), EncodeOptions{}); err == nil {
+			t.Fatalf("%s 应报错", name)
+		}
+	}
+
+	// 5) 白边对比（issue #6 核心主张）：结构源（网格线+红块）加噪后
+	//    分别走 v1/v2 链，与无噪真值（lanczos 2x）比对局部越界像素数
+	//    ——unsharp 无钳制应显著多于 cas（实测约 9 倍差距）
+	draw := "drawgrid=w=40:h=40:t=1:c=white,drawbox=x=110:y=70:w=100:h=100:color=red:t=fill"
+	cleanSrc := filepath.Join(dir, "ov_clean.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-f", "lavfi", "-i", "color=c=gray:s=320x240:r=10:d=2",
+		"-vf", draw, "-crf", "18", "-g", "1", "-pix_fmt", "yuv420p", "-y", cleanSrc,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dirtySrc := filepath.Join(dir, "ov_dirty.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-i", cleanSrc, "-vf", "noise=alls=4:allf=t",
+		"-crf", "20", "-g", "1", "-pix_fmt", "yuv420p", "-y", dirtySrc,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 真值：clean 直接 lanczos 2x（不经增强链）
+	refMP4 := filepath.Join(dir, "ov_ref.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-i", cleanSrc, "-vf", "scale=iw*2:ih*2:flags=lanczos",
+		"-crf", "18", "-pix_fmt", "yuv420p", "-y", refMP4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	refImg := framePNG(t, ff, refMP4, 1.0, filepath.Join(dir, "ov_ref.png"))
+	run := func(o EnhanceOptions, name string) int {
+		out := filepath.Join(dir, name)
+		if err := ff.ApplyVideoFilters(dirtySrc, VideoFilterChain{Enhance: &o}, out, EncodeOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		return overshootCount(refImg, framePNG(t, ff, out, 1.0, filepath.Join(dir, name+".png")))
+	}
+	ov1 := run(EnhanceOptions{Denoise: true, Strength: 2, Scale: 2}, "ov_v1.mp4")
+	ov2 := run(EnhanceOptions{V2: true, DenoiseLevel: 2, Strength: 2, Scale: 2}, "ov_v2.mp4")
+	t.Logf("过冲像素：v1(unsharp)=%d → v2(cas)=%d", ov1, ov2)
+	if ov2*5 >= ov1 {
+		t.Fatalf("v2 过冲像素 %d 应显著少于 v1 %d（1/5 以下）", ov2, ov1)
+	}
+}
+
+// TestApplyVideoFilters_EnhanceNnedi nnedi 插值档（issue #6）：倍增组合链
+//（邻近铺行 + nnedi 神经网络重建 + 转置双向）分辨率/时长断言；Scale=4
+// 倍增一次后 lanczos 放大到位；与 v2 修复/锐化同链叠加（修复 → 放大 →
+// 锐化收尾）。依赖 test/nnedi3_weights.bin（vapoursynth-nnedi3 官方权重，
+// 13.6MB，缺失自动跳过——权重不入库）。
+func TestApplyVideoFilters_EnhanceNnedi(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	weights := filepath.Join(testDir, "nnedi3_weights.bin")
+	if _, err := os.Stat(weights); err != nil {
+		t.Skipf("未找到 nnedi 权重 %s，跳过（放置 nnedi3_weights.bin 后生效）", weights)
+	}
+	src := filepath.Join(dir, "nn_src.mp4")
+	if _, err := ff.run(ff.ffmpegBin(), []string{
+		"-f", "lavfi", "-i", "testsrc2=size=320x240:r=10:d=2",
+		"-pix_fmt", "yuv420p", "-y", src,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out2 := filepath.Join(dir, "nn_2x.mp4")
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Enhance: &EnhanceOptions{
+			V2: true, DenoiseLevel: 1, Strength: 2,
+			Upscaler: "nnedi", NnediWeights: weights, Scale: 2,
+		},
+	}, out2, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ff.Probe(out2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 640 || info.Video.Height != 480 {
+		t.Fatalf("nnedi Scale=2 应输出 640x480，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+	assertDuration(t, ff, out2, 2, 0.3)
+
+	out4 := filepath.Join(dir, "nn_4x.mp4")
+	if err := ff.ApplyVideoFilters(src, VideoFilterChain{
+		Enhance: &EnhanceOptions{
+			V2: true, DenoiseLevel: 2, Strength: 3,
+			Upscaler: "nnedi", NnediWeights: weights, Scale: 4,
+		},
+	}, out4, EncodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err = ff.Probe(out4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Video.Width != 1280 || info.Video.Height != 960 {
+		t.Fatalf("nnedi Scale=4 应输出 1280x960，实际 %dx%d", info.Video.Width, info.Video.Height)
+	}
+}
+
+// TestApplyVideoFilters_EnhanceV2Combo 真实素材组合验证（issue #6，产物
+// 供人工 A/B 评估，登记 test/output/REVIEW.md）：4 条极糊/超糊加噪素材 ×
+// v1 对照 / v2 轻降噪 / v2 强修复 / nnedi 插值组合；另从两条源素材自造
+// 变体补矩阵——"轻度损伤"（糊+轻噪，考察 v2 不过度处理）与"强压缩块
+// 效应"（纯低码率格子感，靶向 deblock：轻/强档差异即 deblock 开关）。
+// 机器断言出片成功与分辨率/时长守恒；画质结论（噪点残留、毛发纹理、
+// 白边、块效应修复、nnedi 边缘质量）人工评估。
+func TestApplyVideoFilters_EnhanceV2Combo(t *testing.T) {
+	ff := testFF(t)
+	dir := outDir(t)
+	weights := filepath.Join(testDir, "nnedi3_weights.bin")
+	haveWeights := false
+	if _, err := os.Stat(weights); err == nil {
+		haveWeights = true
+	} else {
+		t.Log("缺少 test/nnedi3_weights.bin，nnedi 组合跳过")
+	}
+
+	type combo struct {
+		name string
+		opt  EnhanceOptions
+	}
+	all := []combo{
+		{"v1_对照", EnhanceOptions{Denoise: true, Strength: 2, Scale: 2}},
+		{"v2_轻降噪", EnhanceOptions{V2: true, DenoiseLevel: 1, Strength: 2, Scale: 2}},
+		{"v2_强修复", EnhanceOptions{V2: true, DenoiseLevel: 2, Strength: 2, Scale: 2}},
+	}
+	strong := combo{"v2_强档强锐", EnhanceOptions{V2: true, DenoiseLevel: 2, Strength: 3, Scale: 2}}
+
+	apply := func(src, short string, c combo) {
+		t.Helper()
+		out := filepath.Join(dir, short+"__"+c.name+".mp4")
+		if err := ff.ApplyVideoFilters(src, VideoFilterChain{Enhance: &c.opt}, out, EncodeOptions{}); err != nil {
+			t.Fatalf("%s %s: %v", short, c.name, err)
+		}
+		assertFileExists(t, out)
+		srcInfo, err := ff.Probe(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := ff.Probe(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sc := c.opt.Scale
+		if info.Video.Width != srcInfo.Video.Width*sc || info.Video.Height != srcInfo.Video.Height*sc {
+			t.Fatalf("%s %s 分辨率应 %dx%d，实际 %dx%d", short, c.name,
+				srcInfo.Video.Width*sc, srcInfo.Video.Height*sc, info.Video.Width, info.Video.Height)
+		}
+		if math.Abs(info.Duration-srcInfo.Duration) > 0.6 {
+			t.Fatalf("%s %s 时长 %.2f 应与源 %.2f 守恒", short, c.name, info.Duration, srcInfo.Duration)
+		}
+	}
+
+	materials := []struct {
+		file  string
+		short string
+		extra []combo
+	}{
+		// nnedi 4x 只跑 320 宽素材（480 宽 ×4 编码代价高、结论不增量）
+		{"极糊-动画-320x240.mp4", "极糊动画", []combo{
+			{"v2_nnedi4x", EnhanceOptions{V2: true, DenoiseLevel: 2, Strength: 2, Upscaler: "nnedi", NnediWeights: weights, Scale: 4}},
+		}},
+		// 强锐档只跑加噪素材（残噪 × 强锐的相互作用是最坏情形）
+		{"超糊加噪-动画-480x360.mp4", "超糊加噪动画", []combo{strong}},
+		{"超糊加噪-海豹-480x270.mp4", "超糊加噪海豹", []combo{strong}},
+		{"极糊-海豹-320x180.mp4", "极糊海豹", []combo{
+			{"v2_nnedi4x", EnhanceOptions{V2: true, DenoiseLevel: 2, Strength: 2, Upscaler: "nnedi", NnediWeights: weights, Scale: 4}},
+		}},
+	}
+	for _, m := range materials {
+		src := filepath.Join(testDir, m.file)
+		if _, err := os.Stat(src); err != nil {
+			t.Logf("缺少素材 %s，跳过", src)
+			continue
+		}
+		cs := append(append([]combo{}, all...), m.extra...)
+		if haveWeights {
+			cs = append(cs, combo{"v2_nnedi2x", EnhanceOptions{
+				V2: true, DenoiseLevel: 2, Strength: 2,
+				Upscaler: "nnedi", NnediWeights: weights, Scale: 2,
+			}})
+		}
+		for _, c := range cs {
+			apply(src, m.short, c)
+		}
+	}
+
+	// 自造变体 1：轻度损伤（缩到 480x360 + 轻 blur + 轻噪）——考察 v2
+	// 对中等损伤素材不过度处理（对照 v1）
+	srcAnim := filepath.Join(testDir, "源-动画演示片-640x480.mp4")
+	if _, err := os.Stat(srcAnim); err == nil {
+		vp := filepath.Join(dir, "轻损动画.mp4")
+		if _, err := ff.run(ff.ffmpegBin(), []string{
+			"-i", srcAnim, "-vf", "scale=480:360,gblur=sigma=1.2,noise=alls=6:allf=t",
+			"-crf", "22", "-pix_fmt", "yuv420p", "-y", vp,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		apply(vp, "轻损动画", all[0])
+		apply(vp, "轻损动画", all[2])
+	} else {
+		t.Log("缺少 源-动画演示片-640x480.mp4，轻度损伤变体跳过")
+	}
+
+	// 自造变体 2：强压缩块效应（缩到 480x270 + 100k 低码率，不加噪不
+	// 加糊）——deblock 靶向；v2 轻降噪（纯 atadenoise）vs v2 强修复
+	//（+deblock）的 A/B 差异即 deblock 效果
+	srcSeal := filepath.Join(testDir, "源-海豹-压缩画质960x540.mp4")
+	if _, err := os.Stat(srcSeal); err == nil {
+		vp := filepath.Join(dir, "块效应海豹.mp4")
+		if _, err := ff.run(ff.ffmpegBin(), []string{
+			"-i", srcSeal, "-vf", "scale=480:270",
+			"-b:v", "100k", "-maxrate", "100k", "-bufsize", "200k",
+			"-pix_fmt", "yuv420p", "-y", vp,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		apply(vp, "块效应海豹", all[0])
+		apply(vp, "块效应海豹", all[1])
+		apply(vp, "块效应海豹", all[2])
+	} else {
+		t.Log("缺少 源-海豹-压缩画质960x540.mp4，块效应变体跳过")
+	}
+}
+
 // countFrames 用 ffprobe -count_frames 精确统计视频帧数（帧数守恒断言）。
 func countFrames(t *testing.T, ff *FFmpeg, path string) int {
 	t.Helper()

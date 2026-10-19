@@ -13,7 +13,54 @@ ffutils 的全部功能更新、方法变更与废弃都记录在本文件，供
 
 ## Unreleased
 
-（暂无——下一次功能更新写在这里，发版时更名为版本号 + 日期。）
+### 新增
+
+- **`EnhanceOptions.V2`：快速增强 v2 内核开关**（#6）。零值 false
+  保持 v1.4.0 旧链（hqdn3d → lanczos → unsharp）行为不变；
+  `V2: true` 走新链：**deblock + atadenoise 修复 → lanczos 放大 →
+  cas 锐化**，针对加噪/低码率素材（调用方 FFlow 同素材 A/B 实测
+  全面占优）：atadenoise 时域自适应降噪（逐帧闪变的当噪点、稳定的
+  当内容，不抹毛发/纹理），deblock 专治压缩块效应，cas 对比度自适
+  应锐化（无过冲白边——机器实测同源过冲像素约为 unsharp 链的
+  1/13，白边问题实锤收敛）。atadenoise 阈值经实测调优为
+  `0a=0:0b=0.04:0s=1.5`：平坦时域噪声压制 ~87%（默认参数仅 ~23%）。
+  v1 链待调用方迁移完成后废弃（至少保留两个 MINOR 版本）。Since v1.5.0.
+- **`EnhanceOptions.DenoiseLevel`：降噪档位**（#6）。0=未设置（默认，
+  以 `Denoise` bool 为准）、1=轻（atadenoise）、2=强（deblock +
+  atadenoise，轻/强差异即 deblock 开关）；非零优先于 `Denoise`，
+  `Denoise=true` 且 `DenoiseLevel=0` 兼容映射为 1；越界（<0 或 >2）
+  报错。仅 v2 链分档；旧链下非零仅表开启（hqdn3d 预设不分档）。
+  Since v1.5.0.
+- **`EnhanceOptions.Upscaler` / `NnediWeights`：nnedi 高质量插值档**
+  （#6，专业模式用）。`Upscaler` 取 `""`/`"lanczos"`（默认，零值
+  行为不变）或 `"nnedi"`（神经网络边缘导向插值，边缘重建优于
+  lanczos、速度低约一个量级，调用方 UI 需标注"较慢"）；非法值显式
+  报错。`Upscaler="nnedi"` 时 `NnediWeights`（权重文件路径）必填，
+  缺失或文件不存在显式报错、不静默回退；且需 Scale=2/4（nnedi 仅
+  支持倍增，Scale=1 报错）。实现说明：ffmpeg 移植版 nnedi 是纯去
+  隔行器（输出尺寸恒等于输入，没有 VapourSynth 的 dh 倍高模式），
+  倍增由库内组合链实现——邻近采样铺行 + nnedi 神经网络重建插值行，
+  宽度方向借转置走同一流程（transpose 1+2 恒等还原方向）；Scale=4
+  倍增一次（2x）后 lanczos 放大到位（级联两遍 nnedi 代价过高）。
+  权重文件：vapoursynth-nnedi3 的 `nnedi3_weights.bin`，实际体积
+  **约 13.6 MB**（issue 原估"几百 KB"需修正，调用方资产分发体积
+  预估请以此为准）。Since v1.5.0.
+
+### 迁移指引（#6）
+
+```go
+// 旧写法（v1.4.0）——不传 V2 时行为完全不变，无需改动
+Enhance: &EnhanceOptions{Denoise: true, Strength: 2, Scale: 2}
+
+// 推荐写法（v2 内核：修复更强、锐化无白边；降噪档位替代 bool）
+Enhance: &EnhanceOptions{V2: true, DenoiseLevel: 2, Strength: 2, Scale: 2}
+
+// 专业模式细控：降噪轻档 + nnedi 插值（权重随资产分发）
+Enhance: &EnhanceOptions{
+	V2: true, DenoiseLevel: 1, Strength: 2,
+	Upscaler: "nnedi", NnediWeights: "assets/nnedi3_weights.bin", Scale: 2,
+}
+```
 
 ## v1.4.0（2026-10-19）
 
