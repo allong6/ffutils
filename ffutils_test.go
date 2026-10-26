@@ -1217,7 +1217,10 @@ func TestDetectHardwareEncoders(t *testing.T) {
 	ff := testFF(t)
 	got := ff.DetectHardwareEncoders()
 	// 本机未必有硬件编码器：只断言"探测不报错、返回的都是合法候选"
-	valid := map[string]bool{"h264_nvenc": true, "hevc_nvenc": true, "h264_qsv": true, "h264_amf": true}
+	valid := map[string]bool{
+		"h264_nvenc": true, "hevc_nvenc": true, "h264_qsv": true,
+		"h264_amf": true, "h264_vaapi": true, "hevc_vaapi": true,
+	}
 	for _, h := range got {
 		if !valid[string(h.Codec)] {
 			t.Fatalf("返回了未知编码器: %s", h.Codec)

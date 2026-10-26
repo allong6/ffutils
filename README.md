@@ -126,7 +126,7 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 |---|---|
 | `ToHLS(input, segSeconds, output)` | 切 HLS（m3u8 + ts） |
 | `FromHLS(source, output)` | 合成 HLS → 单文件 |
-| `DetectHardwareEncoders()` | 探测 NVENC/QSV/AMF |
+| `DetectHardwareEncoders()` | 硬件编码探测：Windows NVENC/QSV/AMF，Linux NVENC/QSV/VAAPI（无 GPU 时自动跳过 VAAPI），试编码验证可用性 |
 
 ### 其他
 
@@ -137,7 +137,7 @@ info, _ := ff.Probe("in.mp4") // Duration, HasAudio, Video.Width, Audio.Codec ..
 
 ### 枚举常量（enums.go）
 
-`TransitionType`（30+ 转场）、`Position`（四角+平铺）、`VideoCodec`（H264/H265/VP9/copy/NVENC/QSV/AMF）、
+`TransitionType`（30+ 转场）、`Position`（四角+平铺）、`VideoCodec`（H264/H265/VP9/copy/NVENC/QSV/AMF/VAAPI）、
 `AudioCodec`（AAC/MP3/Opus/FLAC/PCM/copy）、`Preset`（ultrafast~veryslow）、`Rotation`（90°/180°/翻转）、
 `FitMode`（裁剪填满/补边/拉伸）、`PipEndAction`（定格/隐藏）、`ComposeLayout`（拼接/宫格）、
 `Dither`（GIF 抖动算法 9 种）、`MotionKind`/`DriftAxis`（水印动态轨迹，v1.2.0）。

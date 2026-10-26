@@ -185,6 +185,8 @@ const (
 	VideoNVENC26 VideoCodec = "hevc_nvenc" // NVIDIA 硬件 H.265
 	VideoQSV     VideoCodec = "h264_qsv"   // Intel 核显硬件编码
 	VideoAMF     VideoCodec = "h264_amf"   // AMD 硬件编码
+	VideoVAAPI   VideoCodec = "h264_vaapi" // VAAPI 硬件编码（Linux，AMD/Intel 开源驱动）。Since v1.6.0.
+	VideoVAAPI26 VideoCodec = "hevc_vaapi" // VAAPI 硬件 H.265（Linux）。Since v1.6.0.
 )
 
 // ---------------------------------------------------------------------------

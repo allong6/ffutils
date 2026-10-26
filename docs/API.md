@@ -19,7 +19,7 @@
 |---|---|
 | `Probe(path) (*ProbeResult, error)` | 一次 ffprobe 拿全部信息：Duration / HasAudio / `Video`（`VideoStream`）/ `Audio`（`AudioStream`）宽高、编码器、帧率等 |
 | `DetectVolume(path) (VolumeStats, error)` | 平均/峰值音量（dB，`VolumeStats.MeanDb/MaxDb`），只解码音频轨，远快于转码 |
-| `DetectHardwareEncoders() []HardwareEncoder` | NVENC/QSV/AMF 硬件编码探测（试编码验证可用性） |
+| `DetectHardwareEncoders() []HardwareEncoder` | 硬件编码探测（试编码验证可用性；候选按平台区分：Windows NVENC/QSV/AMF，Linux NVENC/QSV + VAAPI H.264/HEVC，其他 NVENC/QSV；Since v1.6.0 平台化） |
 
 ## 转码与格式
 
