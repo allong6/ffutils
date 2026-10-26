@@ -13,6 +13,10 @@ ffutils 的全部功能更新、方法变更与废弃都记录在本文件，供
 
 ## Unreleased
 
+（暂无——下一次功能更新写在这里，发版时更名为版本号 + 日期。）
+
+## v1.6.0（2026-10-26）
+
 ### 行为变化
 
 - **`DetectHardwareEncoders` 候选表按平台区分**（#7）。Windows 保持
@@ -24,6 +28,9 @@ ffutils 的全部功能更新、方法变更与废弃都记录在本文件，供
   `format=nv12,hwupload`，设备节点不存在（无 GPU 服务器等）时
   快速跳过 VAAPI 候选、不算错误。公开签名不变；调用方对探测结果
   按编码器取用即可，无需迁移。Since v1.6.0.
+
+### 新增
+
 - **`VideoCodec` 新增 `VideoVAAPI`（`h264_vaapi`）/
   `VideoVAAPI26`（`hevc_vaapi`）**（#7）：Linux 下 AMD/Intel 开源
   驱动的 VAAPI 硬件编码，命名沿用 `VideoNVENC`/`VideoNVENC26` 的
